@@ -1,0 +1,5 @@
+psutil
+Pillow
+PyQt5
+qdarkstyle
+matplotlib
