@@ -1,8 +1,21 @@
 #!/home/user/venv/bin/python
 import sys
 import os
-import ctypes
-from ctypes import wintypes
+import platform
+from pathlib import Path
+
+IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
+
+if IS_WINDOWS:
+    import ctypes
+    from ctypes import wintypes
+    import winreg
+    import extraction
+else:
+    import subprocess
+    import re
+    extraction = None
 import sqlite3
 import datetime
 import psutil
@@ -10,8 +23,6 @@ from collections import defaultdict
 import logging
 
 from PyQt5.QtGui import QIcon
-
-import extraction
 
 from PyQt5.QtCore import QByteArray, QBuffer, QIODevice
 from PyQt5 import QtWidgets, QtGui, QtCore
@@ -22,13 +33,9 @@ import qdarkstyle
 # Matplotlib in PyQt5 einbetten
 import matplotlib
 
-from extraction import IconSize
-
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-
-import winreg
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -126,26 +133,53 @@ class DataManager:
                     
 # Startup Features
 
+def get_executable_path():
+    return sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
+
 def add_to_autostart():
     try:
-        exe_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                             r"Software\Microsoft\Windows\CurrentVersion\Run",
-                             0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, "ScreenTimeApp", 0, winreg.REG_SZ, exe_path)
-        winreg.CloseKey(key)
-        logger.info("Autostart hinzugefügt.")
+        if IS_WINDOWS:
+            exe_path = get_executable_path()
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run",
+                                 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "ScreenTimeApp", 0, winreg.REG_SZ, exe_path)
+            winreg.CloseKey(key)
+            logger.info("Autostart (Windows) hinzugefügt.")
+        elif IS_LINUX:
+            exe_path = get_executable_path()
+            autostart_dir = Path.home() / ".config" / "autostart"
+            autostart_dir.mkdir(parents=True, exist_ok=True)
+            desktop_file = autostart_dir / "screentime.desktop"
+            content = f"""[Desktop Entry]
+Type=Application
+Name=ScreenTimeApp
+Exec={exe_path}
+X-GNOME-Autostart-enabled=true
+"""
+            desktop_file.write_text(content, encoding="utf-8")
+            logger.info("Autostart (Linux .desktop) hinzugefügt: %s", desktop_file)
+        else:
+            logger.warning("Autostart wird auf dieser Plattform nicht unterstützt.")
     except Exception:
         logger.exception("Fehler beim Hinzufügen zum Autostart:")
 
 def remove_from_autostart():
     try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                             r"Software\Microsoft\Windows\CurrentVersion\Run",
-                             0, winreg.KEY_SET_VALUE)
-        winreg.DeleteValue(key, "ScreenTimeApp")
-        winreg.CloseKey(key)
-        logger.info("Autostart entfernt.")
+        if IS_WINDOWS:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run",
+                                 0, winreg.KEY_SET_VALUE)
+            winreg.DeleteValue(key, "ScreenTimeApp")
+            winreg.CloseKey(key)
+            logger.info("Autostart (Windows) entfernt.")
+        elif IS_LINUX:
+            desktop_file = Path.home() / ".config" / "autostart" / "screentime.desktop"
+            if desktop_file.exists():
+                desktop_file.unlink()
+                logger.info("Autostart (Linux) entfernt: %s", desktop_file)
+        else:
+            logger.warning("Autostart wird auf dieser Plattform nicht unterstützt.")
     except Exception:
         logger.exception("Fehler beim Entfernen des Autostarts:")
 
@@ -179,70 +213,223 @@ class AppIcon():
     def get_qicon(self) -> QIcon:
         return self.__qicon
 
-class IconManager:
+DESKTOP_DIRS = [
+    Path.home() / ".local" / "share" / "applications",
+    Path("/usr/share/applications"),
+    Path("/usr/local/share/applications"),
+]
 
-    app_icons:list[AppIcon] = []
+def _parse_desktop_file(path: Path) -> dict:
+    result = {}
+    try:
+        with path.open(encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip()
+                if key in ("Exec", "Icon", "Name"):
+                    result[key] = val
+    except Exception:
+        logger.exception("Fehler beim Lesen der .desktop-Datei %s", path)
+    return result
+
+def _find_desktop_entries_for_exec(exec_basename: str, exec_path: str | None) -> list[Path]:
+    matches = []
+    for d in DESKTOP_DIRS:
+        if not d.exists():
+            continue
+        for p in d.glob("*.desktop"):
+            info = _parse_desktop_file(p)
+            exec_val = info.get("Exec", "")
+            exec_val_clean = re.sub(r"%\w", "", exec_val).strip()
+            if exec_path and exec_path in exec_val_clean:
+                matches.append(p)
+                continue
+            if exec_basename and exec_basename in exec_val_clean:
+                matches.append(p)
+    return matches
+
+def _icon_from_desktop_entry(desktop_path: Path) -> QIcon | None:
+    info = _parse_desktop_file(desktop_path)
+    icon_val = info.get("Icon")
+    if not icon_val:
+        return None
+    icon_path = Path(icon_val)
+    if icon_path.is_absolute() and icon_path.exists():
+        q = QIcon(str(icon_path))
+        if not q.isNull():
+            logger.info("Icon geladen aus Datei %s", icon_path)
+            return q
+    q = QIcon.fromTheme(icon_val)
+    if not q.isNull():
+        logger.info("Icon geladen aus Theme: %s", icon_val)
+        return q
+    return None
+
+def _get_icon_for_pid_linux(proc) -> QIcon | None:
+    try:
+        pid = proc.pid
+        pexe = proc.info.get("exe") if isinstance(proc, psutil.Process) else None
+        if not pexe:
+            try:
+                pexe = os.readlink(f"/proc/{pid}/exe")
+            except Exception:
+                pexe = None
+
+        basename = None
+        if pexe:
+            basename = Path(pexe).name
+        else:
+            basename = proc.info.get("name") if isinstance(proc, psutil.Process) else None
+
+        desktop_matches = _find_desktop_entries_for_exec(basename, pexe)
+        for d in desktop_matches:
+            q = _icon_from_desktop_entry(d)
+            if q:
+                return q
+
+        if basename:
+            q = QIcon.fromTheme(basename)
+            if not q.isNull():
+                logger.info("Icon fromTheme für %s verwendet", basename)
+                return q
+
+        if pexe:
+            p = Path(pexe).parent
+            for ext in ("png", "svg", "xpm", "ico"):
+                candidate = p / f"{Path(pexe).stem}.{ext}"
+                if candidate.exists():
+                    q = QIcon(str(candidate))
+                    if not q.isNull():
+                        return q
+
+    except Exception:
+        logger.exception("Fehler beim Bestimmen des Icons für PID %s:", getattr(proc, "pid", "n/a"))
+    return None
+
+class IconManager:
+    app_icons: list[AppIcon] = []
 
     def get_icon_from_exe(self, exe_path):
-        """
-        Versucht, das Icon aus der EXE mittels ExtractIconExW bzw. SHGetFileInfoW zu extrahieren.
-        """
+        if not IS_WINDOWS or extraction is None:
+            return None
         try:
             icon = extraction.extract_icon(exe_path, IconSize.LARGE)
             img = Image.frombytes("RGBA", (32, 32), icon, "raw", "BGRA")
             buffer = BytesIO()
             img.save(buffer, format="ICO")
             return buffer.getvalue()
-        except Exception as e:
+        except Exception:
             logger.exception("Fehler beim Extrahieren des Icons aus %s:", exe_path)
+            return None
+
+    def _qicon_from_bytes_or_theme(self, exe_path_or_name, icon_bytes) -> QIcon:
+        try:
+            if icon_bytes:
+                qt_bytes = QByteArray(icon_bytes)
+                pixmap = QtGui.QPixmap()
+                pixmap.loadFromData(qt_bytes)
+                return QIcon(pixmap)
+        except Exception:
+            logger.exception("Fehler beim Erzeugen von QIcon aus Bytes:")
+
+        try:
+            base = os.path.basename(exe_path_or_name) if exe_path_or_name else ""
+            name, _ = os.path.splitext(base)
+            if name:
+                q = QIcon.fromTheme(name)
+                if not q.isNull():
+                    return q
+        except Exception:
+            logger.exception("Fehler beim Laden von Theme-Icon für %s:", exe_path_or_name)
+
         return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
 
     def get_icon_for_app(self, app_name) -> QIcon:
-        """
-        Sucht anhand des Prozessnamens nach einem laufenden Prozess und versucht, sein Icon zu extrahieren.
-        Verwendet dabei einen Cache-Ordner 'icons'.
-        """
-
         try:
-
+            # 1) Cache
             for icon in self.app_icons:
                 if app_name != icon.get_identifier():
                     continue
                 return icon.get_qicon()
 
-            for proc in psutil.process_iter(['name', 'exe']):
-                if proc.info['name'] and proc.info['name'].lower() == app_name.lower() and proc.info['exe']:
-                    icon = self.get_icon_from_exe(proc.info['exe'])
-                    if icon == None:
-                        logger.error("Fehler beim icon extrahieren von %s", app_name)
-                        return None
-                    appIcon = AppIcon(app_name, icon)
-                    self.app_icons.append(appIcon)
-                    logger.info("Icon für '%s' extrahiert und im Cache gespeichert.", app_name)
-                    return appIcon.get_qicon()
+            for proc in psutil.process_iter(['name', 'exe', 'cmdline']):
+                try:
+                    pname = proc.info.get('name')
+                    if not pname:
+                        continue
+                    if pname.lower() != app_name.lower():
+                        continue
 
+                    # Windows: exe-icon
+                    pexe = proc.info.get('exe')
+                    icon_bytes = None
+                    if IS_WINDOWS and pexe:
+                        icon_bytes = self.get_icon_from_exe(pexe)
 
+                    # Linux: .desktop or theme icon
+                    if IS_LINUX:
+                        qicon = _get_icon_for_pid_linux(proc)
+                        if qicon:
+                            # Cache and return
+                            try:
+                                appIcon = AppIcon(app_name, b"")
+                                self.app_icons.append(appIcon)
+                            except Exception:
+                                pass
+                            return qicon
 
-        except Exception as e:
+                    qicon = self._qicon_from_bytes_or_theme(pexe or pname, icon_bytes)
+                    try:
+                        appIcon = AppIcon(app_name, icon_bytes if icon_bytes else b"")
+                        self.app_icons.append(appIcon)
+                    except Exception:
+                        pass
+                    return qicon
+                except Exception:
+                    continue
+        except Exception:
             logger.exception("Fehler beim Abrufen des Icons für %s:", app_name)
-        logger.warning("Standard-Icon für '%s' verwendet.", app_name)
-        return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
+
+        return self._qicon_from_bytes_or_theme(app_name, None)
 
 ########################################################################
 # Ermitteln des aktuell aktiven Prozesses (Windows)
 ########################################################################
 
 def get_active_window_process_name():
-    user32 = ctypes.windll.user32
-    hwnd = user32.GetForegroundWindow()
-    if hwnd == 0:
-        return ""
-    pid = ctypes.c_ulong()
-    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    try:
-        process = psutil.Process(pid.value)
-        return process.name()
-    except Exception:
+    if IS_WINDOWS:
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if hwnd == 0:
+                return ""
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            process = psutil.Process(pid.value)
+            return process.name()
+        except Exception:
+            logger.exception("Fehler beim Ermitteln des aktiven Fensters (Windows):")
+            return ""
+    elif IS_LINUX:
+        # Linux: versuche xdotool, sonst leer zurückgeben (Alternative: python-xlib)
+        try:
+            out = subprocess.check_output(["xdotool", "getwindowfocus", "getwindowpid"], stderr=subprocess.DEVNULL)
+            pid = int(out.strip())
+            return psutil.Process(pid).name()
+        except FileNotFoundError:
+            # xdotool nicht installiert
+            logger.warning("xdotool nicht gefunden; aktives Fenster unter Linux nicht bestimmt.")
+            return ""
+        except Exception:
+            logger.exception("Fehler beim Ermitteln des aktiven Fensters (Linux):")
+            return ""
+    else:
         return ""
 
 ########################################################################
