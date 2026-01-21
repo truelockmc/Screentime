@@ -559,6 +559,7 @@ class MainWindow(QtWidgets.QMainWindow):
             display_usage[self.current_process] = display_usage.get(self.current_process, 0) + delta
 
         total = sum(display_usage.values())
+        v_scroll = self.table.verticalScrollBar().value()
         self.table.setRowCount(0)
         for app, seconds in sorted(display_usage.items(), key=lambda x: x[1], reverse=True):
             percentage = (seconds / total * 100) if total > 0 else 0
@@ -581,6 +582,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.table.setItem(row, 2, time_item)
             self.table.setCellWidget(row, 3, progress)
         self.table.resizeRowsToContents()
+        self.table.verticalScrollBar().setValue(v_scroll)
 
     def show_stats_window(self, from_time, to_time, show_app_list=False):
         dlg = ChartWindow(from_time, to_time, show_app_list, self)
