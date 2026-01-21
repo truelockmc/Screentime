@@ -165,7 +165,7 @@ def add_to_autostart():
             content = f"""[Desktop Entry]
 Type=Application
 Name=ScreenTimeApp
-Exec={exe_path}
+Exec="{exe_path}"
 X-GNOME-Autostart-enabled=true
 """
             desktop_file.write_text(content, encoding="utf-8")
