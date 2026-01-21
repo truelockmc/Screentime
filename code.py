@@ -184,42 +184,20 @@ def remove_from_autostart():
         logger.exception("Fehler beim Entfernen des Autostarts:")
 
 ########################################################################
-# Windows-spezifische Funktionen für App-Icons mit Caching
+# Funktionen für App-Icons mit Caching
 ########################################################################
 
-class AppIcon():
-    __identifier: str
-    __raw_bytes: bytes
-    __qicon: QIcon
+from typing import Optional, List
 
-    def __init__(self, identifier, raw_bytes):
-        self.__identifier = identifier
-        self.__raw_bytes = raw_bytes
-
-        qt_bytes = QByteArray(raw_bytes)
-        qt_buffer = QBuffer(qt_bytes)
-        qt_buffer.open(QIODevice.ReadOnly)
-
-        pixmap = QtGui.QPixmap()
-        pixmap.loadFromData(qt_bytes)
-        self.__qicon = QIcon(pixmap)
-
-    def get_bytes(self) -> bytes:
-        return self.__raw_bytes
-
-    def get_identifier(self) -> str:
-        return self.__identifier
-
-    def get_qicon(self) -> QIcon:
-        return self.__qicon
-
-DESKTOP_DIRS = [
+# Desktop dirs to search for .desktop files on Linux
+DESKTOP_DIRS: List[Path] = [
     Path.home() / ".local" / "share" / "applications",
     Path("/usr/share/applications"),
     Path("/usr/local/share/applications"),
 ]
 
 def _parse_desktop_file(path: Path) -> dict:
+    """Simple .desktop parser: returns keys Exec, Icon, Name when present."""
     result = {}
     try:
         with path.open(encoding="utf-8", errors="ignore") as f:
@@ -235,17 +213,22 @@ def _parse_desktop_file(path: Path) -> dict:
                 if key in ("Exec", "Icon", "Name"):
                     result[key] = val
     except Exception:
-        logger.exception("Fehler beim Lesen der .desktop-Datei %s", path)
+        # logger must exist in your file (defined earlier); fall back to print if not
+        try:
+            logger.exception("Fehler beim Lesen der .desktop-Datei %s", path)
+        except NameError:
+            print("Fehler beim Lesen der .desktop-Datei", path)
     return result
 
-def _find_desktop_entries_for_exec(exec_basename: str, exec_path: str | None) -> list[Path]:
-    matches = []
+def _find_desktop_entries_for_exec(exec_basename: Optional[str], exec_path: Optional[str]) -> List[Path]:
+    matches: List[Path] = []
     for d in DESKTOP_DIRS:
         if not d.exists():
             continue
         for p in d.glob("*.desktop"):
             info = _parse_desktop_file(p)
             exec_val = info.get("Exec", "")
+            # remove placeholders like %U %f
             exec_val_clean = re.sub(r"%\w", "", exec_val).strip()
             if exec_path and exec_path in exec_val_clean:
                 matches.append(p)
@@ -254,24 +237,37 @@ def _find_desktop_entries_for_exec(exec_basename: str, exec_path: str | None) ->
                 matches.append(p)
     return matches
 
-def _icon_from_desktop_entry(desktop_path: Path) -> QIcon | None:
+def _icon_from_desktop_entry(desktop_path: Path) -> Optional[QIcon]:
     info = _parse_desktop_file(desktop_path)
     icon_val = info.get("Icon")
     if not icon_val:
         return None
+    # If icon_val is an absolute path and exists, load it directly
     icon_path = Path(icon_val)
-    if icon_path.is_absolute() and icon_path.exists():
-        q = QIcon(str(icon_path))
+    try:
+        if icon_path.is_absolute() and icon_path.exists():
+            q = QIcon(str(icon_path))
+            if not q.isNull():
+                try:
+                    logger.info("Icon geladen aus Datei %s", icon_path)
+                except NameError:
+                    pass
+                return q
+    except Exception:
+        pass
+    try:
+        q = QIcon.fromTheme(icon_val)
         if not q.isNull():
-            logger.info("Icon geladen aus Datei %s", icon_path)
+            try:
+                logger.info("Icon geladen aus Theme: %s", icon_val)
+            except NameError:
+                pass
             return q
-    q = QIcon.fromTheme(icon_val)
-    if not q.isNull():
-        logger.info("Icon geladen aus Theme: %s", icon_val)
-        return q
+    except Exception:
+        pass
     return None
 
-def _get_icon_for_pid_linux(proc) -> QIcon | None:
+def _get_icon_for_pid_linux(proc: psutil.Process) -> Optional[QIcon]:
     try:
         pid = proc.pid
         pexe = proc.info.get("exe") if isinstance(proc, psutil.Process) else None
@@ -287,56 +283,126 @@ def _get_icon_for_pid_linux(proc) -> QIcon | None:
         else:
             basename = proc.info.get("name") if isinstance(proc, psutil.Process) else None
 
+        # 1) find .desktop files
         desktop_matches = _find_desktop_entries_for_exec(basename, pexe)
         for d in desktop_matches:
             q = _icon_from_desktop_entry(d)
             if q:
                 return q
 
+        # 2) theme icon by basename
         if basename:
             q = QIcon.fromTheme(basename)
             if not q.isNull():
-                logger.info("Icon fromTheme für %s verwendet", basename)
+                try:
+                    logger.info("Icon fromTheme für %s verwendet", basename)
+                except NameError:
+                    pass
                 return q
 
+        # 3) try files next to the executable
         if pexe:
             p = Path(pexe).parent
+            stem = Path(pexe).stem
             for ext in ("png", "svg", "xpm", "ico"):
-                candidate = p / f"{Path(pexe).stem}.{ext}"
+                candidate = p / f"{stem}.{ext}"
                 if candidate.exists():
                     q = QIcon(str(candidate))
                     if not q.isNull():
                         return q
 
     except Exception:
-        logger.exception("Fehler beim Bestimmen des Icons für PID %s:", getattr(proc, "pid", "n/a"))
+        try:
+            logger.exception("Fehler beim Bestimmen des Icons für PID %s:", getattr(proc, "pid", "n/a"))
+        except NameError:
+            pass
     return None
 
-class IconManager:
-    app_icons: list[AppIcon] = []
+# Robust cache entry that holds bytes or QIcon
+class AppIcon:
+    def __init__(self, identifier: str, raw_bytes: Optional[bytes] = None, qicon: Optional[QIcon] = None):
+        self.__identifier = identifier
+        self.__raw_bytes = raw_bytes
+        self.__qicon = qicon
 
-    def get_icon_from_exe(self, exe_path):
-        if not IS_WINDOWS or extraction is None:
-            return None
+        if self.__qicon is None and self.__raw_bytes:
+            try:
+                qt_bytes = QByteArray(self.__raw_bytes)
+                pixmap = QPixmap()
+                pixmap.loadFromData(qt_bytes)
+                if not pixmap.isNull():
+                    self.__qicon = QIcon(pixmap)
+                else:
+                    self.__qicon = None
+            except Exception:
+                try:
+                    logger.exception("Fehler beim Erstellen von QIcon aus rohen Bytes für %s", identifier)
+                except NameError:
+                    pass
+                self.__qicon = None
+
+    def get_bytes(self) -> Optional[bytes]:
+        return self.__raw_bytes
+
+    def get_identifier(self) -> str:
+        return self.__identifier
+
+    def get_qicon(self) -> QIcon:
+        if self.__qicon is not None and not self.__qicon.isNull():
+            return self.__qicon
+        if self.__raw_bytes:
+            try:
+                qt_bytes = QByteArray(self.__raw_bytes)
+                pixmap = QPixmap()
+                pixmap.loadFromData(qt_bytes)
+                if not pixmap.isNull():
+                    q = QIcon(pixmap)
+                    self.__qicon = q
+                    return q
+            except Exception:
+                try:
+                    logger.exception("Fehler beim Erzeugen von QIcon aus gecachten Bytes für %s", self.__identifier)
+                except NameError:
+                    pass
+        # Final fallback: system standard file icon
+        return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
+
+
+class IconManager:
+    app_icons: List[AppIcon] = []
+
+    def get_icon_from_exe(self, exe_path: str) -> Optional[bytes]:
         try:
+            # extraction should exist and implement extract_icon on Windows only
+            if not IS_WINDOWS:
+                return None
+            if "extraction" not in globals() or extraction is None:
+                return None
             icon = extraction.extract_icon(exe_path, IconSize.LARGE)
             img = Image.frombytes("RGBA", (32, 32), icon, "raw", "BGRA")
             buffer = BytesIO()
             img.save(buffer, format="ICO")
             return buffer.getvalue()
         except Exception:
-            logger.exception("Fehler beim Extrahieren des Icons aus %s:", exe_path)
+            try:
+                logger.exception("Fehler beim Extrahieren des Icons aus %s:", exe_path)
+            except NameError:
+                pass
             return None
 
-    def _qicon_from_bytes_or_theme(self, exe_path_or_name, icon_bytes) -> QIcon:
+    def _qicon_from_bytes_or_theme(self, exe_path_or_name: Optional[str], icon_bytes: Optional[bytes]) -> QIcon:
         try:
             if icon_bytes:
                 qt_bytes = QByteArray(icon_bytes)
-                pixmap = QtGui.QPixmap()
+                pixmap = QPixmap()
                 pixmap.loadFromData(qt_bytes)
-                return QIcon(pixmap)
+                if not pixmap.isNull():
+                    return QIcon(pixmap)
         except Exception:
-            logger.exception("Fehler beim Erzeugen von QIcon aus Bytes:")
+            try:
+                logger.exception("Fehler beim Erzeugen von QIcon aus Bytes:")
+            except NameError:
+                pass
 
         try:
             base = os.path.basename(exe_path_or_name) if exe_path_or_name else ""
@@ -346,60 +412,101 @@ class IconManager:
                 if not q.isNull():
                     return q
         except Exception:
-            logger.exception("Fehler beim Laden von Theme-Icon für %s:", exe_path_or_name)
+            try:
+                logger.exception("Fehler beim Laden von Theme-Icon für %s:", exe_path_or_name)
+            except NameError:
+                pass
 
         return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
 
-    def get_icon_for_app(self, app_name) -> QIcon:
+    def get_icon_for_app(self, app_name: str) -> QIcon:
         try:
-            # 1) Cache
-            for icon in self.app_icons:
-                if app_name != icon.get_identifier():
-                    continue
-                return icon.get_qicon()
+            # 1) check cache
+            for icon in list(self.app_icons):
+                if app_name == icon.get_identifier():
+                    q = icon.get_qicon()
+                    if q is not None and not q.isNull():
+                        return q
+                    # remove corrupted cache entry
+                    try:
+                        self.app_icons.remove(icon)
+                    except Exception:
+                        pass
+                    break
 
+            # 2) search processes
             for proc in psutil.process_iter(['name', 'exe', 'cmdline']):
                 try:
                     pname = proc.info.get('name')
-                    if not pname:
-                        continue
-                    if pname.lower() != app_name.lower():
+                    if not pname or pname.lower() != app_name.lower():
                         continue
 
-                    # Windows: exe-icon
                     pexe = proc.info.get('exe')
-                    icon_bytes = None
+                    icon_bytes: Optional[bytes] = None
+
                     if IS_WINDOWS and pexe:
                         icon_bytes = self.get_icon_from_exe(pexe)
+                        if icon_bytes:
+                            try:
+                                qt_bytes = QByteArray(icon_bytes)
+                                pixmap = QPixmap()
+                                pixmap.loadFromData(qt_bytes)
+                                if not pixmap.isNull():
+                                    qicon = QIcon(pixmap)
+                                    try:
+                                        self.app_icons.append(AppIcon(app_name, raw_bytes=icon_bytes, qicon=qicon))
+                                    except Exception:
+                                        try:
+                                            logger.exception("Fehler beim Cachen des Windows-Icons für %s", app_name)
+                                        except NameError:
+                                            pass
+                                    return qicon
+                            except Exception:
+                                try:
+                                    logger.exception("Fehler beim Erzeugen von QIcon aus Windows-Bytes für %s", app_name)
+                                except NameError:
+                                    pass
 
-                    # Linux: .desktop or theme icon
+                    # Linux: try .desktop or theme
                     if IS_LINUX:
                         qicon = _get_icon_for_pid_linux(proc)
-                        if qicon:
-                            # Cache and return
+                        if qicon and not qicon.isNull():
                             try:
-                                appIcon = AppIcon(app_name, b"")
-                                self.app_icons.append(appIcon)
+                                self.app_icons.append(AppIcon(app_name, raw_bytes=None, qicon=qicon))
                             except Exception:
-                                pass
+                                try:
+                                    logger.exception("Fehler beim Cachen des Linux-Icons für %s", app_name)
+                                except NameError:
+                                    pass
                             return qicon
 
-                    qicon = self._qicon_from_bytes_or_theme(pexe or pname, icon_bytes)
+                    key_name = (pexe and Path(pexe).stem) or pname
+                    qicon = self._qicon_from_bytes_or_theme(key_name, None)
+                    if qicon is None or qicon.isNull():
+                        qicon = QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
                     try:
-                        appIcon = AppIcon(app_name, icon_bytes if icon_bytes else b"")
-                        self.app_icons.append(appIcon)
+                        self.app_icons.append(AppIcon(app_name, raw_bytes=None, qicon=qicon))
                     except Exception:
-                        pass
+                        try:
+                            logger.exception("Fehler beim Cachen des Fallback-Icons für %s", app_name)
+                        except NameError:
+                            pass
                     return qicon
+
                 except Exception:
                     continue
-        except Exception:
-            logger.exception("Fehler beim Abrufen des Icons für %s:", app_name)
 
-        return self._qicon_from_bytes_or_theme(app_name, None)
+        except Exception:
+            try:
+                logger.exception("Fehler beim Abrufen des Icons für %s:", app_name)
+            except NameError:
+                pass
+
+        # final fallback
+        return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
 
 ########################################################################
-# Ermitteln des aktuell aktiven Prozesses (Windows)
+# Ermitteln des aktuell aktiven Prozesses
 ########################################################################
 
 def get_active_window_process_name():
