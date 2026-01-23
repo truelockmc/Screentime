@@ -393,7 +393,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("ScreenTime App")
+        self.setWindowTitle("Screen Time")
         self.resize(900, 600)
         self.setFont(QtGui.QFont("Segoe UI", 12))
 
@@ -501,7 +501,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def setup_tray_icon(self):
         self.tray_icon = QtWidgets.QSystemTrayIcon(self)
         self.tray_icon.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_ComputerIcon))
-        self.tray_icon.setToolTip("ScreenTime")
+        self.tray_icon.setToolTip("Screen Time")
         tray_menu = QtWidgets.QMenu()
         show_action = tray_menu.addAction("Open")
         quit_action = tray_menu.addAction("Exit")
