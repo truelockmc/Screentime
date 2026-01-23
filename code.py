@@ -250,6 +250,21 @@ def get_active_window_process_name():
     else:
         return ""
 
+# Dont count time on Lockscreen
+def is_screen_locked_linux():
+    try:
+        out = subprocess.check_output([
+            "gdbus", "call",
+            "--session",
+            "--dest", "org.gnome.ScreenSaver",
+            "--object-path", "/org/gnome/ScreenSaver",
+            "--method", "org.gnome.ScreenSaver.GetActive"
+        ], stderr=subprocess.DEVNULL)
+        return "true" in out.decode().lower()
+    except Exception:
+        return False
+
+
 ########################################################################
 # Fenster für die Diagramm-Ansicht (Statistiken)
 ########################################################################
@@ -534,7 +549,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.header.setText(f"Todays App Usage (Total: {formatted_total})")
 
     def update_tracking(self):
+
         now = datetime.datetime.now()
+
+        if IS_LINUX and is_screen_locked_linux():
+            # Dont count time on Lockscreen
+            self.current_process = ""
+            self.last_switch_time = now
+            return
+
         active_app = get_active_window_process_name()
         if active_app == self.current_process and self.current_process:
             self.update_total_usage()
