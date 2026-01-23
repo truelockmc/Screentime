@@ -14,10 +14,8 @@ if IS_WINDOWS:
     import extraction
 else:
     import subprocess
-    import re
     extraction = None
 
-from typing import Optional, List
 MAPPING_PATH = "~/.config/screentime/wm_class_map.json"
 
 try:
@@ -62,8 +60,6 @@ logging.basicConfig(
     #level=logging.DEBUG,        # enable debug mode
     level=logging.CRITICAL + 1, # disable debug mode
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(log_file, encoding='utf-8'),
-              logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 logger.info("Programmstart")
@@ -81,15 +77,15 @@ class DataManager:
         try:
             conn = sqlite3.connect(DataManager.DB_PATH)
             c = conn.cursor()
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS UsageRecords (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS DailyUsage (
+                    date TEXT NOT NULL,
                     app_name TEXT NOT NULL,
-                    start_time TEXT NOT NULL,
-                    end_time TEXT NOT NULL,
-                    duration_seconds REAL NOT NULL
+                    duration_seconds REAL NOT NULL,
+                    PRIMARY KEY (date, app_name)
                 )
-            ''')
+            """)
+
             conn.commit()
             conn.close()
             logger.info("Datenbank initialisiert: %s", DataManager.DB_PATH)
@@ -97,50 +93,34 @@ class DataManager:
             logger.exception("Fehler bei der Initialisierung der Datenbank:")
 
     @staticmethod
-    def save_usage_record(app_name, start_time, end_time, duration_seconds):
-        try:
-            conn = sqlite3.connect(DataManager.DB_PATH)
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO UsageRecords (app_name, start_time, end_time, duration_seconds)
-                VALUES (?, ?, ?, ?)
-            ''', (app_name,
-                  start_time.isoformat(),
-                  end_time.isoformat(),
-                  duration_seconds))
-            conn.commit()
-            conn.close()
-            logger.info("Gespeicherter Datensatz: %s, Dauer: %s Sekunden", app_name, duration_seconds)
-        except Exception as e:
-            logger.exception("Fehler beim Speichern des Datensatzes:")
+    def add_daily_usage(app_name, seconds, date=None):
+        if not date:
+            date = datetime.date.today().isoformat()
+
+        conn = sqlite3.connect(DataManager.DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO DailyUsage (date, app_name, duration_seconds)
+            VALUES (?, ?, ?)
+            ON CONFLICT(date, app_name)
+            DO UPDATE SET duration_seconds = duration_seconds + ?
+        """, (date, app_name, seconds, seconds))
+        conn.commit()
+        conn.close()
 
     @staticmethod
-    def get_usage_records(from_time, to_time):
-        try:
-            conn = sqlite3.connect(DataManager.DB_PATH)
-            c = conn.cursor()
-            c.execute('''
-                SELECT id, app_name, start_time, end_time, duration_seconds
-                FROM UsageRecords
-                WHERE start_time >= ? AND end_time <= ?
-            ''', (from_time.isoformat(), to_time.isoformat()))
-            rows = c.fetchall()
-            conn.close()
-
-            records = []
-            for row in rows:
-                records.append({
-                    'id': row[0],
-                    'app_name': row[1],
-                    'start_time': datetime.datetime.fromisoformat(row[2]),
-                    'end_time': datetime.datetime.fromisoformat(row[3]),
-                    'duration_seconds': row[4]
-                })
-            logger.info("Geladene Datensätze: %d", len(records))
-            return records
-        except Exception as e:
-            logger.exception("Fehler beim Laden der Datensätze:")
-            return []
+    def get_daily_usage(from_date, to_date):
+        conn = sqlite3.connect(DataManager.DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            SELECT date, app_name, duration_seconds
+            FROM DailyUsage
+            WHERE date BETWEEN ? AND ?
+            ORDER BY date
+        """, (from_date, to_date))
+        rows = c.fetchall()
+        conn.close()
+        return rows
                     
 # Startup Features
 
@@ -311,90 +291,77 @@ class ChartWindow(QtWidgets.QDialog):
             self.populate_app_table(from_time, to_time)
 
     def plot_usage(self):
-        records = DataManager.get_usage_records(self.from_time, self.to_time)
-        aggregated = {}
-        title = ""
-        x_labels = []
-        y_values = []
+        from_date = self.from_time.date().isoformat()
+        to_date = self.to_time.date().isoformat()
+
+        rows = DataManager.get_daily_usage(from_date, to_date)
+
+        agg = defaultdict(float)
 
         if self.aggregation == "day":
-            # Für Wochenansicht: pro Tag aggregieren (x = Tage)
-            from collections import defaultdict
-            agg = defaultdict(float)
-            for rec in records:
-                day = rec['start_time'].date()  # Schlüssel: Datum
-                agg[day] += rec['duration_seconds']
-            days = sorted(agg.keys())
-            x_labels = [day.strftime("%d.%m") for day in days]
-            # In Stunden umrechnen
-            y_values = [agg[day] / 3600.0 for day in days]
+            for date, _, seconds in rows:
+                agg[date] += seconds
+            x_labels = [d[8:10] + "." + d[5:7] for d in sorted(agg)]
+            y_values = [agg[d] / 3600 for d in sorted(agg)]
             title = "Nutzungszeit pro Tag (Stunden)"
+
         elif self.aggregation == "week":
-            # Für Monatsansicht: pro Kalenderwoche aggregieren
-            from collections import defaultdict
-            agg = defaultdict(float)
-            for rec in records:
-                year, week, _ = rec['start_time'].isocalendar()
-                key = f"{year}-W{week:02d}"
-                agg[key] += rec['duration_seconds']
-            weeks = sorted(agg.keys())
-            x_labels = weeks
-            y_values = [agg[w] / 3600.0 for w in weeks]
+            for date, _, seconds in rows:
+                year, week, _ = datetime.date.fromisoformat(date).isocalendar()
+                key = f"{year}-KW{week:02d}"
+                agg[key] += seconds
+            x_labels = sorted(agg)
+            y_values = [agg[k] / 3600 for k in x_labels]
             title = "Nutzungszeit pro Kalenderwoche (Stunden)"
+
         elif self.aggregation == "month":
-            # Für Jahresansicht: pro Monat aggregieren
-            from collections import defaultdict
-            agg = defaultdict(float)
-            for rec in records:
-                key = rec['start_time'].strftime("%Y-%m")
-                agg[key] += rec['duration_seconds']
-            months = sorted(agg.keys())
-            x_labels = months
-            y_values = [agg[m] / 3600.0 for m in months]
+            for date, _, seconds in rows:
+                key = date[:7]  # YYYY-MM
+                agg[key] += seconds
+            x_labels = sorted(agg)
+            y_values = [agg[k] / 3600 for k in x_labels]
             title = "Nutzungszeit pro Monat (Stunden)"
 
         ax = self.figure.add_subplot(111)
         ax.clear()
-        ax.plot(x_labels, y_values, marker='o', color='cyan')
-        ax.set_title(title, fontsize=14)
-        ax.set_xlabel("Zeitraum", fontsize=12)
-        ax.set_ylabel("Nutzungszeit (Stunden)", fontsize=12)
+        ax.plot(x_labels, y_values, marker='o')
+        ax.set_title(title)
+        ax.set_ylabel("Stunden")
         ax.grid(True)
-        for label in ax.get_xticklabels():
-            label.set_rotation(45)
-            label.set_fontsize(10)
+        ax.tick_params(axis='x', rotation=45)
         self.canvas.draw()
 
     def populate_app_table(self, from_time, to_time):
-        # Bestehende Logik für die Tabelle bleibt unverändert
-        records = DataManager.get_usage_records(from_time, to_time)
-        from collections import defaultdict
+        from_date = from_time.date().isoformat()
+        to_date = to_time.date().isoformat()
+
+        rows = DataManager.get_daily_usage(from_date, to_date)
         app_usage = defaultdict(float)
-        for rec in records:
-            app_usage[rec['app_name']] += rec['duration_seconds']
+
+        for _, app, seconds in rows:
+            app_usage[app] += seconds
+
         total = sum(app_usage.values())
         apps = sorted(app_usage.items(), key=lambda x: x[1], reverse=True)
+
         self.table.setRowCount(len(apps))
+
         for row, (app, seconds) in enumerate(apps):
             percentage = (seconds / total * 100) if total > 0 else 0
             formatted_time = str(datetime.timedelta(seconds=int(seconds)))
-            # Verwende icon_manager.get_icon_for_app() anstelle von get_icon_for_app()
             icon = icon_manager.get_icon_for_app(app)
+
             icon_item = QtWidgets.QTableWidgetItem()
             icon_item.setIcon(icon)
-            name_item = QtWidgets.QTableWidgetItem(app)
-            time_item = QtWidgets.QTableWidgetItem(formatted_time)
-            progress = QtWidgets.QProgressBar()
-            progress.setMinimum(0)
-            progress.setMaximum(100)
-            progress.setValue(int(percentage))
-            progress.setFormat(f"{percentage:.1f}%")
-            progress.setAlignment(QtCore.Qt.AlignCenter)
+
             self.table.setItem(row, 0, icon_item)
-            self.table.setItem(row, 1, name_item)
-            self.table.setItem(row, 2, time_item)
-            self.table.setCellWidget(row, 3, progress)
-        self.table.resizeRowsToContents()
+            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(app))
+            self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(formatted_time))
+
+            bar = QtWidgets.QProgressBar()
+            bar.setValue(int(percentage))
+            bar.setFormat(f"{percentage:.1f}%")
+            self.table.setCellWidget(row, 3, bar)
 
 # Settings
 
@@ -515,12 +482,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 remove_from_autostart()
 
     def load_usage_from_db(self):
-        today_start = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
-        now = datetime.datetime.now()
-        records = DataManager.get_usage_records(today_start, now)
-        for rec in records:
-            self.usage_today[rec['app_name']] += rec['duration_seconds']
-        logger.info("Tagesdaten geladen. Aktuelle Nutzung: %s", dict(self.usage_today))
+        today = datetime.date.today().isoformat()
+
+        conn = sqlite3.connect(DataManager.DB_PATH)
+        c = conn.cursor()
+
+        c.execute("""
+            SELECT app_name, duration_seconds
+            FROM DailyUsage
+            WHERE date = ?
+        """, (today,))
+
+        for app, seconds in c.fetchall():
+            self.usage_today[app] += seconds
+
+        conn.close()
 
     def setup_tray_icon(self):
         self.tray_icon = QtWidgets.QSystemTrayIcon(self)
@@ -552,6 +528,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         now = datetime.datetime.now()
 
+        if now.date() != self.last_switch_time.date():
+            self.last_switch_time = now
+
+
         if IS_LINUX and is_screen_locked_linux():
             # Dont count time on Lockscreen
             self.current_process = ""
@@ -564,14 +544,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_table(live_update=True)
         else:
             duration = (now - self.last_switch_time).total_seconds()
-            if self.current_process:
+
+            if self.current_process and duration >= 5:
                 self.usage_today[self.current_process] += duration
-                DataManager.save_usage_record(self.current_process,
-                                              self.last_switch_time,
-                                              now,
-                                              duration)
+                DataManager.add_daily_usage(self.current_process, duration)
+
             self.current_process = active_app
             self.last_switch_time = now
+
             self.update_total_usage()
             self.update_table(live_update=False)
 
@@ -633,6 +613,13 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.exec_()
 
     def exit_app(self):
+        now = datetime.datetime.now()
+        duration = (now - self.last_switch_time).total_seconds()
+
+        if self.current_process and duration > 0:
+            self.usage_today[self.current_process] += duration
+            DataManager.add_daily_usage(self.current_process, duration)
+
         logger.info("Beende Anwendung.")
         QtWidgets.QApplication.quit()
 
