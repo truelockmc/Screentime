@@ -62,7 +62,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-logger.info("Programmstart")
+logger.info("Starting...")
 
 ########################################################################
 # Datenpersistenz: DataManager mit SQLite
@@ -275,12 +275,12 @@ class ChartWindow(QtWidgets.QDialog):
         self.plot_usage()
 
         if self.show_app_list:
-            label = QtWidgets.QLabel("App-Nutzung in diesem Zeitraum:")
+            label = QtWidgets.QLabel("App-usage in this time period:")
             label.setFont(QtGui.QFont("Segoe UI", 14))
             main_layout.addWidget(label)
             self.table = QtWidgets.QTableWidget()
             self.table.setColumnCount(4)
-            self.table.setHorizontalHeaderLabels(["", "App", "Nutzungszeit", "Verhältnis"])
+            self.table.setHorizontalHeaderLabels(["", "App", "Time used", "Ratio"])
             self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
             self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
             self.table.setStyleSheet("font-size: 14pt;")
@@ -303,7 +303,7 @@ class ChartWindow(QtWidgets.QDialog):
                 agg[date] += seconds
             x_labels = [d[8:10] + "." + d[5:7] for d in sorted(agg)]
             y_values = [agg[d] / 3600 for d in sorted(agg)]
-            title = "Nutzungszeit pro Tag (Stunden)"
+            title = "Screentime per Day (Hours)"
 
         elif self.aggregation == "week":
             for date, _, seconds in rows:
@@ -312,7 +312,7 @@ class ChartWindow(QtWidgets.QDialog):
                 agg[key] += seconds
             x_labels = sorted(agg)
             y_values = [agg[k] / 3600 for k in x_labels]
-            title = "Nutzungszeit pro Kalenderwoche (Stunden)"
+            title = "Screentime per Week (Hours)"
 
         elif self.aggregation == "month":
             for date, _, seconds in rows:
@@ -320,13 +320,13 @@ class ChartWindow(QtWidgets.QDialog):
                 agg[key] += seconds
             x_labels = sorted(agg)
             y_values = [agg[k] / 3600 for k in x_labels]
-            title = "Nutzungszeit pro Monat (Stunden)"
+            title = "Screentime per Month (Hours)"
 
         ax = self.figure.add_subplot(111)
         ax.clear()
         ax.plot(x_labels, y_values, marker='o')
         ax.set_title(title)
-        ax.set_ylabel("Stunden")
+        ax.set_ylabel("Hours")
         ax.grid(True)
         ax.tick_params(axis='x', rotation=45)
         self.canvas.draw()
@@ -368,11 +368,11 @@ class ChartWindow(QtWidgets.QDialog):
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Einstellungen")
+        self.setWindowTitle("Settings")
         self.resize(400, 200)
         layout = QtWidgets.QVBoxLayout(self)
         self.chk_autostart = QtWidgets.QCheckBox("Open on Startup")
-        self.chk_autostart.setChecked(True)  # Standardmäßig an
+        self.chk_autostart.setChecked(True)  # active by default
         layout.addWidget(self.chk_autostart)
         self.chk_option = QtWidgets.QCheckBox("Option A")
         layout.addWidget(self.chk_option)
@@ -407,12 +407,12 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
-        self.header = QtWidgets.QLabel("Heutige App-Nutzung")
+        self.header = QtWidgets.QLabel("Screentime today")
         self.header.setFont(QtGui.QFont("Segoe UI", 16))
         main_layout.addWidget(self.header)
         
         self.table = QtWidgets.QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["", "App", "Nutzungszeit", "Verhältnis"])
+        self.table.setHorizontalHeaderLabels(["", "App", "Time used", "Ratio"])
         self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setStyleSheet("font-size: 14pt;")
@@ -430,10 +430,10 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout.insertLayout(0, top_layout)
  
         button_layout = QtWidgets.QHBoxLayout()
-        self.btn_weekly = QtWidgets.QPushButton("Wöchentliche Statistiken")
-        self.btn_monthly = QtWidgets.QPushButton("Monatliche Statistiken")
-        self.btn_yearly = QtWidgets.QPushButton("Jahresstatistiken")
-        self.btn_exit = QtWidgets.QPushButton("Beenden")
+        self.btn_weekly = QtWidgets.QPushButton("Weekly Statistics")
+        self.btn_monthly = QtWidgets.QPushButton("Monthly Statistics")
+        self.btn_yearly = QtWidgets.QPushButton("Yearly Statistics")
+        self.btn_exit = QtWidgets.QPushButton("Quit")
         for btn in (self.btn_weekly, self.btn_monthly, self.btn_yearly, self.btn_exit):
             btn.setFont(QtGui.QFont("Segoe UI", 14))
             button_layout.addWidget(btn)
@@ -444,7 +444,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_yearly.clicked.connect(self.show_yearly_stats)
         self.btn_exit.clicked.connect(self.exit_app)
         
-        self.qsettings = QtCore.QSettings("MyCompany", "ScreenTimeApp")
+        self.qsettings = QtCore.QSettings("true_lock", "Screen Time")
         autostart_enabled = self.qsettings.value("autostart", True, type=bool)
         if autostart_enabled:
             add_to_autostart()
@@ -620,14 +620,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.usage_today[self.current_process] += duration
             DataManager.add_daily_usage(self.current_process, duration)
 
-        logger.info("Beende Anwendung.")
+        logger.info("Quitting...")
         QtWidgets.QApplication.quit()
 
     def closeEvent(self, event):
         event.ignore()
         self.hide()
-        self.tray_icon.showMessage("ScreenTime App",
-                                   "Die App läuft weiter im Hintergrund.",
+        self.tray_icon.showMessage("Screen Time",
+                                   "The App will continue to run in the Background.",
                                    QtWidgets.QSystemTrayIcon.Information, 2000)
 
 ########################################################################
