@@ -22,7 +22,6 @@ DESKTOP_DIRS: List[Path] = [
     Path("/usr/local/share/applications"),
     Path("/var/lib/flatpak/exports/share/applications"),
     Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "applications",
-    Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "applications",
 ]
 
 def _parse_desktop_file(path: Path) -> dict:
@@ -185,37 +184,49 @@ def _get_icon_for_proc(proc: psutil.Process) -> Optional[QIcon]:
 
 class ImprovedIconManager:
     def __init__(self):
-        self.app_icons = []
+        self.app_icons: dict[str, QIcon] = {}
 
     def _cache_icon(self, identifier: str, qicon: QIcon):
-        try:
-            self.app_icons = [t for t in self.app_icons if t[0] != identifier]
-            self.app_icons.append((identifier, qicon))
-        except Exception:
-            logger.exception("Fehler beim Cachen des Icons für %s", identifier)
+        self.app_icons[identifier] = qicon
 
     def _get_cached(self, identifier: str) -> Optional[QIcon]:
-        for ident, q in list(self.app_icons):
-            if ident == identifier:
-                return q
-        return None
+        return self.app_icons.get(identifier)
 
-    def get_icon_for_app(self, app_name: str) -> QIcon:
+    def get_icon_for_app(self, app_name: str, icon_hint: Optional[str] = None) -> QIcon:
         try:
             if not app_name:
                 return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
 
             # 1) cache
-            cached = self._get_cached(app_name)
+            cache_key = f"{app_name}|{icon_hint or ''}"
+            cached = self._get_cached(cache_key)
             if cached and not cached.isNull():
                 return cached
+            if icon_hint:
+                try:
+                    p = Path(icon_hint)
+                    if not p.is_absolute():
+                        p = Path(__file__).parent / p
+                    if p.exists():
+                        q = QIcon(str(p))
+                        if not q.isNull():
+                            self._cache_icon(cache_key, q)
+                            return q
+
+                    q = QIcon.fromTheme(icon_hint)
+                    if not q.isNull():
+                        self._cache_icon(cache_key, q)
+                        return q
+
+                except Exception:
+                    logger.exception("Could not load mapped icon: %s", icon_hint)
 
             # 2) treat as .desktop id / name / StartupWMClass
             desktop_entries = _find_desktop_entries_by_key(app_name)
             for d in desktop_entries:
                 q = _icon_from_desktop_entry(d)
                 if q and not q.isNull():
-                    self._cache_icon(app_name, q)
+                    self._cache_icon(cache_key, q)
                     return q
 
             # 3) try processes (match name or basename)
@@ -229,7 +240,7 @@ class ImprovedIconManager:
                     if pname.lower() == app_name.lower() or Path(pexe).stem.lower() == app_name.lower():
                         q = _get_icon_for_proc(proc)
                         if q and not q.isNull():
-                            self._cache_icon(app_name, q)
+                            self._cache_icon(cache_key, q)
                             return q
                 except Exception:
                     continue
@@ -238,18 +249,18 @@ class ImprovedIconManager:
             try:
                 q = QIcon.fromTheme(app_name)
                 if q and not q.isNull():
-                    self._cache_icon(app_name, q)
+                    self._cache_icon(cache_key, q)
                     return q
                 q2 = QIcon.fromTheme(Path(app_name).stem)
                 if q2 and not q2.isNull():
-                    self._cache_icon(app_name, q2)
+                    self._cache_icon(cache_key, q2)
                     return q2
             except Exception:
                 logger.exception("Fehler beim Laden von Theme-Icon für %s", app_name)
 
             # 5) final fallback: standard icon
             fallback = QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
-            self._cache_icon(app_name, fallback)
+            self._cache_icon(cache_key, fallback)
             return fallback
 
         except Exception:

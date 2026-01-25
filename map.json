@@ -1,0 +1,10 @@
+{
+  "soffice.bin": {
+    "display_name": "LibreOffice",
+    "icon": "/usr/share/icons/hicolor/64x64/apps/libreoffice-writer.png"
+  },
+  "aces": {
+    "display_name": "War Thunder",
+    "icon": "/home/user/.local/share/icons/hicolor/64x64/apps/steam_icon_236390.png"
+  }
+}

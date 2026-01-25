@@ -16,8 +16,6 @@ else:
     import subprocess
     extraction = None
 
-MAPPING_PATH = "~/.config/screentime/wm_class_map.json"
-
 try:
     from window_resolver import get_active_app
 except Exception:
@@ -45,11 +43,15 @@ matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+import map_resolve
+
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+MAPPING_PATH = os.path.join(BASE_DIR, "map.json")
+app_mapping = map_resolve.AppMapping(MAPPING_PATH)
 
 ########################################################################
 # Logging-Setup
@@ -339,7 +341,8 @@ class ChartWindow(QtWidgets.QDialog):
         app_usage = defaultdict(float)
 
         for _, app, seconds in rows:
-            app_usage[app] += seconds
+            normalized_name, _ = app_mapping.resolve(app)
+            app_usage[normalized_name] += seconds
 
         total = sum(app_usage.values())
         apps = sorted(app_usage.items(), key=lambda x: x[1], reverse=True)
@@ -349,13 +352,16 @@ class ChartWindow(QtWidgets.QDialog):
         for row, (app, seconds) in enumerate(apps):
             percentage = (seconds / total * 100) if total > 0 else 0
             formatted_time = str(datetime.timedelta(seconds=int(seconds)))
-            icon = icon_manager.get_icon_for_app(app)
+            display_name, icon_hint = app_mapping.resolve(app)
+            icon = icon_manager.get_icon_for_app(app, icon_hint)
+
+            name_item = QtWidgets.QTableWidgetItem(display_name)
 
             icon_item = QtWidgets.QTableWidgetItem()
             icon_item.setIcon(icon)
 
             self.table.setItem(row, 0, icon_item)
-            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(app))
+            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(display_name))
             self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(formatted_time))
 
             bar = QtWidgets.QProgressBar()
@@ -494,7 +500,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """, (today,))
 
         for app, seconds in c.fetchall():
-            self.usage_today[app] += seconds
+            normalized_name, _ = app_mapping.resolve(app)
+            self.usage_today[normalized_name] += seconds
 
         conn.close()
 
@@ -617,8 +624,9 @@ class MainWindow(QtWidgets.QMainWindow):
         duration = (now - self.last_switch_time).total_seconds()
 
         if self.current_process and duration > 0:
-            self.usage_today[self.current_process] += duration
-            DataManager.add_daily_usage(self.current_process, duration)
+            normalized_name, _ = app_mapping.resolve(self.current_process)
+            self.usage_today[normalized_name] += duration
+            DataManager.add_daily_usage(normalized_name, duration)
 
         logger.info("Quitting...")
         QtWidgets.QApplication.quit()
@@ -647,16 +655,20 @@ try:
 
 except Exception:
     class _FallbackIconManager:
-        def get_icon_for_app(self, name):
-            return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
-
+        def get_icon_for_app(
+            self,
+            app_name: str,
+            icon_hint: str | None = None
+        ):
+            return QtWidgets.QApplication.style().standardIcon(
+                QtWidgets.QStyle.SP_FileIcon
+            )
     icon_manager = _FallbackIconManager()
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setFont(QtGui.QFont("Segoe UI", 12))
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
-    
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
