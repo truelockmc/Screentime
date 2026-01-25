@@ -538,14 +538,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if now.date() != self.last_switch_time.date():
             self.last_switch_time = now
 
-
         if IS_LINUX and is_screen_locked_linux():
             # Dont count time on Lockscreen
             self.current_process = ""
             self.last_switch_time = now
             return
 
-        active_app = get_active_window_process_name()
+        raw_active_app = get_active_window_process_name()
+
+        active_app, _icon_hint = app_mapping.resolve(raw_active_app) if raw_active_app else ("", None)
+
         if active_app == self.current_process and self.current_process:
             self.update_total_usage()
             self.update_table(live_update=True)
@@ -576,21 +578,27 @@ class MainWindow(QtWidgets.QMainWindow):
             formatted_time = str(datetime.timedelta(seconds=int(seconds)))
             row = self.table.rowCount()
             self.table.insertRow(row)
-            icon = icon_manager.get_icon_for_app(app)
+
+            display_name, icon_hint = app_mapping.resolve(app)
+            icon = icon_manager.get_icon_for_app(app, icon_hint)
+
             icon_item = QtWidgets.QTableWidgetItem()
             icon_item.setIcon(icon)
-            name_item = QtWidgets.QTableWidgetItem(app)
+            name_item = QtWidgets.QTableWidgetItem(display_name)
             time_item = QtWidgets.QTableWidgetItem(formatted_time)
+
             progress = QtWidgets.QProgressBar()
             progress.setMinimum(0)
             progress.setMaximum(100)
             progress.setValue(int(percentage))
             progress.setFormat(f"{percentage:.1f}%")
             progress.setAlignment(QtCore.Qt.AlignCenter)
+
             self.table.setItem(row, 0, icon_item)
             self.table.setItem(row, 1, name_item)
             self.table.setItem(row, 2, time_item)
             self.table.setCellWidget(row, 3, progress)
+
         self.table.resizeRowsToContents()
         self.table.verticalScrollBar().setValue(v_scroll)
 
