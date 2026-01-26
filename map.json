@@ -9,7 +9,7 @@
   },
   "gnome-terminal-server": {
     "display_name": "Gnome Terminal",
-    "icon": "/usr/share/icons/Zorin/22x22/apps/org.gnome.Terminal.png"
+    "icon": "/usr/share/icons/hicolor/symbolic/apps/org.gnome.Terminal-symbolic.svg"
   },
   "steamwebhelper": {
     "display_name": "Steam",
@@ -18,5 +18,13 @@
   "Fishards.x86_64": {
     "display_name": "Fishards",
     "icon": "/home/user/.local/share/icons/hicolor/256x256/apps/steam_icon_1637140.png"
+  },
+  "gnome-control-center": {
+    "display_name": "Gnome Settings",
+    "icon": "/usr/share/icons/hicolor/symbolic/apps/org.gnome.Settings-symbolic.svg"
+  },
+  "gnome-shell": {
+    "display_name": "Shell",
+    "icon": "/usr/share/icons/hicolor/symbolic/apps/org.gnome.Terminal.Preferences-symbolic.svg"
   }
 }

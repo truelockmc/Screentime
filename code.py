@@ -410,6 +410,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.table.insertRow(row)
 
             display_name, icon_hint = app_mapping.resolve(app)
+            display_name = display_name.title()
             icon = icon_manager.get_icon_for_app(app, icon_hint)
 
             icon_item = QtWidgets.QTableWidgetItem()
