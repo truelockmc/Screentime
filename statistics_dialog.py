@@ -18,7 +18,7 @@ class StatisticsCache:
         cls._cache[key] = value
 
 class StatisticsWorker(QtCore.QObject):
-    finished = QtCore.pyqtSignal(dict)
+    finished = QtCore.pyqtSignal(dict, dict)  # (time_series, per_app)
 
     def __init__(self, from_date, to_date, aggregation):
         super().__init__()
@@ -35,7 +35,7 @@ class StatisticsWorker(QtCore.QObject):
 
         cached = StatisticsCache.get(cache_key)
         if cached:
-            self.finished.emit(cached)
+            self.finished.emit(cached["time_series"], cached["per_app"])
             return
 
         rows = DataManager.get_daily_usage(
@@ -43,20 +43,24 @@ class StatisticsWorker(QtCore.QObject):
             self.to_date.isoformat()
         )
 
-        agg = defaultdict(float)
+        time_series = defaultdict(float)
 
-        for date, _, seconds in rows:
+        per_app = defaultdict(float)
+
+        for date, app_name, seconds in rows:
             if self.aggregation == "day":
                 bucket_key = date
             elif self.aggregation == "week":
                 y, w, _ = datetime.date.fromisoformat(date).isocalendar()
                 bucket_key = f"{y}-W{w:02d}"
-            else:
+            else:  # month
                 bucket_key = date[:7]
-            agg[bucket_key] += seconds
+            time_series[bucket_key] += seconds
 
-        StatisticsCache.set(cache_key, agg)
-        self.finished.emit(agg)
+            per_app[app_name] += seconds
+
+        StatisticsCache.set(cache_key, {"time_series": time_series, "per_app": per_app})
+        self.finished.emit(time_series, per_app)
 
 class LoadingOverlay(QtWidgets.QWidget):
     def __init__(self, parent):
@@ -92,11 +96,6 @@ class StatisticsDialog(QtWidgets.QDialog):
         self.to_date = QtWidgets.QDateEdit(calendarPopup=True)
         self.from_date.setVisible(False)
         self.to_date.setVisible(False)
-        self.table = QtWidgets.QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["App", "Total Time"])
-        layout.addWidget(self.table)
-
 
         top.addWidget(QtWidgets.QLabel("Range:"))
         top.addWidget(self.range_combo)
@@ -105,9 +104,17 @@ class StatisticsDialog(QtWidgets.QDialog):
 
         layout.addLayout(top)
 
+        # Graph
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
-        layout.addWidget(self.canvas)
+        layout.addWidget(self.canvas, stretch=2)
+
+        self.table = QtWidgets.QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["App", "Total Time"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        layout.addWidget(self.table, stretch=1)
 
         self.overlay = LoadingOverlay(self)
         self.overlay.hide()
@@ -150,17 +157,20 @@ class StatisticsDialog(QtWidgets.QDialog):
         self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
 
-    def on_ready(self, data):
+    def on_ready(self, time_series, per_app):
         self.overlay.hide()
         self.figure.clear()
         ax = self.figure.add_subplot(111)
-
-        keys = sorted(data.keys())
-        values = [data[k] / 3600 for k in keys]
-
+        keys = sorted(time_series.keys())
+        values = [time_series[k] / 3600 for k in keys]
         ax.plot(keys, values, marker="o")
         ax.set_ylabel("Hours")
         ax.grid(True)
         ax.tick_params(axis="x", rotation=45)
-
         self.canvas.draw()
+
+        self.table.setRowCount(0)
+        for row_idx, (app, seconds) in enumerate(sorted(per_app.items(), key=lambda x: x[1], reverse=True)):
+            self.table.insertRow(row_idx)
+            self.table.setItem(row_idx, 0, QtWidgets.QTableWidgetItem(app))
+            self.table.setItem(row_idx, 1, QtWidgets.QTableWidgetItem(str(datetime.timedelta(seconds=int(seconds)))))
