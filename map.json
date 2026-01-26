@@ -14,5 +14,9 @@
   "steamwebhelper": {
     "display_name": "Steam",
     "icon": "/home/user/.local/share/icons/hicolor/256x256/apps/steam.png"
+  },
+  "Fishards.x86_64": {
+    "display_name": "Fishards",
+    "icon": "/home/user/.local/share/icons/hicolor/256x256/apps/steam_icon_1637140.png"
   }
 }

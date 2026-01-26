@@ -44,6 +44,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 import map_resolve
+from statistics_dialog import StatisticsDialog
+from data_manager import DataManager
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -60,70 +62,12 @@ app_mapping = map_resolve.AppMapping(MAPPING_PATH)
 log_file = os.path.join(BASE_DIR, "log.txt")
 logging.basicConfig(
     #level=logging.DEBUG,        # enable debug mode
-    level=logging.CRITICAL + 1, # disable debug mode
+    level=logging.CRITICAL, # disable debug mode
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 logger.info("Starting...")
 
-########################################################################
-# Datenpersistenz: DataManager mit SQLite
-########################################################################
-
-class DataManager:
-    
-    DB_PATH = os.path.join(BASE_DIR, "usageData.db")
-
-    @staticmethod
-    def initialize_database():
-        try:
-            conn = sqlite3.connect(DataManager.DB_PATH)
-            c = conn.cursor()
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS DailyUsage (
-                    date TEXT NOT NULL,
-                    app_name TEXT NOT NULL,
-                    duration_seconds REAL NOT NULL,
-                    PRIMARY KEY (date, app_name)
-                )
-            """)
-
-            conn.commit()
-            conn.close()
-            logger.info("Datenbank initialisiert: %s", DataManager.DB_PATH)
-        except Exception as e:
-            logger.exception("Fehler bei der Initialisierung der Datenbank:")
-
-    @staticmethod
-    def add_daily_usage(app_name, seconds, date=None):
-        if not date:
-            date = datetime.date.today().isoformat()
-
-        conn = sqlite3.connect(DataManager.DB_PATH)
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO DailyUsage (date, app_name, duration_seconds)
-            VALUES (?, ?, ?)
-            ON CONFLICT(date, app_name)
-            DO UPDATE SET duration_seconds = duration_seconds + ?
-        """, (date, app_name, seconds, seconds))
-        conn.commit()
-        conn.close()
-
-    @staticmethod
-    def get_daily_usage(from_date, to_date):
-        conn = sqlite3.connect(DataManager.DB_PATH)
-        c = conn.cursor()
-        c.execute("""
-            SELECT date, app_name, duration_seconds
-            FROM DailyUsage
-            WHERE date BETWEEN ? AND ?
-            ORDER BY date
-        """, (from_date, to_date))
-        rows = c.fetchall()
-        conn.close()
-        return rows
-                    
 # Startup Features
 
 def get_executable_path():
@@ -246,129 +190,6 @@ def is_screen_locked_linux():
     except Exception:
         return False
 
-
-########################################################################
-# Fenster für die Diagramm-Ansicht (Statistiken)
-########################################################################
-
-class ChartWindow(QtWidgets.QDialog):
-    def __init__(self, from_time, to_time, aggregation="day", show_app_list=False, parent=None):
-        """
-        aggregation: "day" für Wochendiagramm (x = Tage),
-                     "week" für Monatsdiagramm (x = Kalenderwochen),
-                     "month" für Jahresdiagramm (x = Monate)
-        """
-        super().__init__(parent)
-        self.setWindowTitle("Statistiken")
-        self.resize(900, 600)
-        self.from_time = from_time
-        self.to_time = to_time
-        self.aggregation = aggregation
-        self.show_app_list = show_app_list
-
-        main_layout = QtWidgets.QVBoxLayout(self)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-
-        # Matplotlib-Figur
-        self.figure = Figure(figsize=(5, 4), dpi=100)
-        self.canvas = FigureCanvas(self.figure)
-        main_layout.addWidget(self.canvas)
-        self.plot_usage()
-
-        if self.show_app_list:
-            label = QtWidgets.QLabel("App-usage in this time period:")
-            label.setFont(QtGui.QFont("Segoe UI", 14))
-            main_layout.addWidget(label)
-            self.table = QtWidgets.QTableWidget()
-            self.table.setColumnCount(4)
-            self.table.setHorizontalHeaderLabels(["", "App", "Time used", "Ratio"])
-            self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-            self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-            self.table.setStyleSheet("font-size: 14pt;")
-            scroll = QtWidgets.QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setWidget(self.table)
-            main_layout.addWidget(scroll)
-            self.populate_app_table(from_time, to_time)
-
-    def plot_usage(self):
-        from_date = self.from_time.date().isoformat()
-        to_date = self.to_time.date().isoformat()
-
-        rows = DataManager.get_daily_usage(from_date, to_date)
-
-        agg = defaultdict(float)
-
-        if self.aggregation == "day":
-            for date, _, seconds in rows:
-                agg[date] += seconds
-            x_labels = [d[8:10] + "." + d[5:7] for d in sorted(agg)]
-            y_values = [agg[d] / 3600 for d in sorted(agg)]
-            title = "Screentime per Day (Hours)"
-
-        elif self.aggregation == "week":
-            for date, _, seconds in rows:
-                year, week, _ = datetime.date.fromisoformat(date).isocalendar()
-                key = f"{year}-KW{week:02d}"
-                agg[key] += seconds
-            x_labels = sorted(agg)
-            y_values = [agg[k] / 3600 for k in x_labels]
-            title = "Screentime per Week (Hours)"
-
-        elif self.aggregation == "month":
-            for date, _, seconds in rows:
-                key = date[:7]  # YYYY-MM
-                agg[key] += seconds
-            x_labels = sorted(agg)
-            y_values = [agg[k] / 3600 for k in x_labels]
-            title = "Screentime per Month (Hours)"
-
-        ax = self.figure.add_subplot(111)
-        ax.clear()
-        ax.plot(x_labels, y_values, marker='o')
-        ax.set_title(title)
-        ax.set_ylabel("Hours")
-        ax.grid(True)
-        ax.tick_params(axis='x', rotation=45)
-        self.canvas.draw()
-
-    def populate_app_table(self, from_time, to_time):
-        from_date = from_time.date().isoformat()
-        to_date = to_time.date().isoformat()
-
-        rows = DataManager.get_daily_usage(from_date, to_date)
-        app_usage = defaultdict(float)
-
-        for _, app, seconds in rows:
-            normalized_name, _ = app_mapping.resolve(app)
-            app_usage[normalized_name] += seconds
-
-        total = sum(app_usage.values())
-        apps = sorted(app_usage.items(), key=lambda x: x[1], reverse=True)
-
-        self.table.setRowCount(len(apps))
-
-        for row, (app, seconds) in enumerate(apps):
-            percentage = (seconds / total * 100) if total > 0 else 0
-            formatted_time = str(datetime.timedelta(seconds=int(seconds)))
-            display_name, icon_hint = app_mapping.resolve(app)
-            icon = icon_manager.get_icon_for_app(app, icon_hint)
-
-            name_item = QtWidgets.QTableWidgetItem(display_name)
-
-            icon_item = QtWidgets.QTableWidgetItem()
-            icon_item.setIcon(icon)
-
-            self.table.setItem(row, 0, icon_item)
-            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(display_name))
-            self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(formatted_time))
-
-            bar = QtWidgets.QProgressBar()
-            bar.setValue(int(percentage))
-            bar.setFormat(f"{percentage:.1f}%")
-            self.table.setCellWidget(row, 3, bar)
-
 # Settings
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -416,14 +237,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.header = QtWidgets.QLabel("Screentime today")
         self.header.setFont(QtGui.QFont("Segoe UI", 16))
         main_layout.addWidget(self.header)
-        
+
         self.table = QtWidgets.QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["", "App", "Time used", "Ratio"])
         self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setStyleSheet("font-size: 14pt;")
         main_layout.addWidget(self.table)
-        
+
         # Settings Button oben rechts hinzufügen:
         self.settings_button = QtWidgets.QToolButton(self)
         self.settings_button.setText("⚙")  # alternativ: self.settings_button.setIcon(QtGui.QIcon("path/to/settings_icon.png"))
@@ -434,22 +255,28 @@ class MainWindow(QtWidgets.QMainWindow):
         top_layout.addStretch()
         top_layout.addWidget(self.settings_button)
         main_layout.insertLayout(0, top_layout)
- 
+
         button_layout = QtWidgets.QHBoxLayout()
-        self.btn_weekly = QtWidgets.QPushButton("Weekly Statistics")
-        self.btn_monthly = QtWidgets.QPushButton("Monthly Statistics")
-        self.btn_yearly = QtWidgets.QPushButton("Yearly Statistics")
+        self.btn_statistics = QtWidgets.QPushButton("Statistics")
+        self.btn_statistics.setFont(QtGui.QFont("Segoe UI", 14))
+        self.btn_statistics.clicked.connect(self.open_statistics)
+
+        button_layout.addWidget(self.btn_statistics)
         self.btn_exit = QtWidgets.QPushButton("Quit")
-        for btn in (self.btn_weekly, self.btn_monthly, self.btn_yearly, self.btn_exit):
+        for btn in (self.btn_statistics, self.btn_exit):
             btn.setFont(QtGui.QFont("Segoe UI", 14))
             button_layout.addWidget(btn)
         main_layout.addLayout(button_layout)
 
-        self.btn_weekly.clicked.connect(self.show_weekly_stats)
-        self.btn_monthly.clicked.connect(self.show_monthly_stats)
-        self.btn_yearly.clicked.connect(self.show_yearly_stats)
+        self.from_date = QtWidgets.QDateEdit(calendarPopup=True)
+        self.to_date = QtWidgets.QDateEdit(calendarPopup=True)
+
+        self.from_date.setVisible(False)
+        self.to_date.setVisible(False)
+        self.btn_statistics.clicked.connect(self.open_statistics)
+
         self.btn_exit.clicked.connect(self.exit_app)
-        
+
         self.qsettings = QtCore.QSettings("true_lock", "Screen Time")
         autostart_enabled = self.qsettings.value("autostart", True, type=bool)
         if autostart_enabled:
@@ -466,11 +293,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         DataManager.initialize_database()
         self.load_usage_from_db()
-        
+
         total_seconds = sum(self.usage_today.values())
         formatted_total = str(datetime.timedelta(seconds=int(total_seconds)))
         self.header.setText(f"Todays App Usage (Total: {formatted_total})")
-        
+
+    def open_statistics(self):
+        dlg = StatisticsDialog(self)
+        dlg.exec_()
+
     def open_settings(self):
         dlg = SettingsDialog(self)
         # Vorbelegen der Dialogfelder mit gespeicherten Einstellungen:
@@ -525,7 +356,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def show_normal(self):
         self.show()
         self.setWindowState(QtCore.Qt.WindowNoState)
-        
+
     def update_total_usage(self):
         total_seconds = sum(self.usage_today.values())
         formatted_total = str(datetime.timedelta(seconds=int(total_seconds)))
@@ -554,7 +385,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             duration = (now - self.last_switch_time).total_seconds()
 
-            if self.current_process and duration >= 5:
+            if self.current_process and duration > 0:
                 self.usage_today[self.current_process] += duration
                 DataManager.add_daily_usage(self.current_process, duration)
 
@@ -579,8 +410,8 @@ class MainWindow(QtWidgets.QMainWindow):
             row = self.table.rowCount()
             self.table.insertRow(row)
 
-            display_name, icon_hint = app_mapping.resolve(app)
-            icon = icon_manager.get_icon_for_app(app, icon_hint)
+            display_name = app
+            icon = icon_manager.get_icon_for_app(app, None)
 
             icon_item = QtWidgets.QTableWidgetItem()
             icon_item.setIcon(icon)
@@ -601,31 +432,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.table.resizeRowsToContents()
         self.table.verticalScrollBar().setValue(v_scroll)
-
-    def show_stats_window(self, from_time, to_time, show_app_list=False):
-        dlg = ChartWindow(from_time, to_time, show_app_list, self)
-        dlg.exec_()
-
-    def show_weekly_stats(self):
-        to_time = datetime.datetime.now()
-        from_time = to_time - datetime.timedelta(days=7)
-        # Für eine Woche: Aggregation pro Tag ("day")
-        dlg = ChartWindow(from_time, to_time, aggregation="day", show_app_list=True, parent=self)
-        dlg.exec_()
-
-    def show_monthly_stats(self):
-        to_time = datetime.datetime.now()
-        from_time = to_time - datetime.timedelta(days=30)
-        # Für einen Monat: Aggregation pro Kalenderwoche ("week")
-        dlg = ChartWindow(from_time, to_time, aggregation="week", show_app_list=False, parent=self)
-        dlg.exec_()
-
-    def show_yearly_stats(self):
-        to_time = datetime.datetime.now()
-        from_time = to_time - datetime.timedelta(days=365)
-        # Für ein Jahr: Aggregation pro Monat ("month")
-        dlg = ChartWindow(from_time, to_time, aggregation="month", show_app_list=False, parent=self)
-        dlg.exec_()
 
     def exit_app(self):
         now = datetime.datetime.now()
