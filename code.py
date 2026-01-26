@@ -331,8 +331,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """, (today,))
 
         for app, seconds in c.fetchall():
-            normalized_name, _ = app_mapping.resolve(app)
-            self.usage_today[normalized_name] += seconds
+            self.usage_today[app] += seconds
 
         conn.close()
 
@@ -389,7 +388,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.usage_today[self.current_process] += duration
                 DataManager.add_daily_usage(self.current_process, duration)
 
-            self.current_process = active_app
+            self.current_process = raw_active_app
             self.last_switch_time = now
 
             self.update_total_usage()
@@ -410,8 +409,8 @@ class MainWindow(QtWidgets.QMainWindow):
             row = self.table.rowCount()
             self.table.insertRow(row)
 
-            display_name = app
-            icon = icon_manager.get_icon_for_app(app, None)
+            display_name, icon_hint = app_mapping.resolve(app)
+            icon = icon_manager.get_icon_for_app(app, icon_hint)
 
             icon_item = QtWidgets.QTableWidgetItem()
             icon_item.setIcon(icon)
@@ -438,9 +437,9 @@ class MainWindow(QtWidgets.QMainWindow):
         duration = (now - self.last_switch_time).total_seconds()
 
         if self.current_process and duration > 0:
-            normalized_name, _ = app_mapping.resolve(self.current_process)
-            self.usage_today[normalized_name] += duration
-            DataManager.add_daily_usage(normalized_name, duration)
+            self.usage_today[self.current_process] += duration
+            DataManager.add_daily_usage(self.current_process, duration)
+
 
         logger.info("Quitting...")
         QtWidgets.QApplication.quit()

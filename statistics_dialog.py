@@ -5,6 +5,41 @@ from PyQt5 import QtWidgets, QtCore
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from data_manager import DataManager
+import map_resolve
+
+import sys
+import os
+
+try:
+    if IS_WINDOWS:
+        try:
+            from icon_manager_win import IconManager as PlatformIconManager
+        except ImportError:
+            from icon_manager import IconManager as PlatformIconManager
+    else:
+        from icon_manager import ImprovedIconManager as PlatformIconManager
+
+    icon_manager = PlatformIconManager()
+
+except Exception:
+    class _FallbackIconManager:
+        def get_icon_for_app(
+            self,
+            app_name: str,
+            icon_hint: str | None = None
+        ):
+            return QtWidgets.QApplication.style().standardIcon(
+                QtWidgets.QStyle.SP_FileIcon
+            )
+    icon_manager = _FallbackIconManager()
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+MAPPING_PATH = os.path.join(BASE_DIR, "map.json")
+app_mapping = map_resolve.AppMapping(MAPPING_PATH)
 
 class StatisticsCache:
     _cache = {}
@@ -110,9 +145,10 @@ class StatisticsDialog(QtWidgets.QDialog):
         layout.addWidget(self.canvas, stretch=2)
 
         self.table = QtWidgets.QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["App", "Total Time"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Icon", "App", "Total Time"])
+        self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         layout.addWidget(self.table, stretch=1)
 
@@ -172,5 +208,15 @@ class StatisticsDialog(QtWidgets.QDialog):
         self.table.setRowCount(0)
         for row_idx, (app, seconds) in enumerate(sorted(per_app.items(), key=lambda x: x[1], reverse=True)):
             self.table.insertRow(row_idx)
-            self.table.setItem(row_idx, 0, QtWidgets.QTableWidgetItem(app))
-            self.table.setItem(row_idx, 1, QtWidgets.QTableWidgetItem(str(datetime.timedelta(seconds=int(seconds)))))
+
+            display_name, icon_hint = app_mapping.resolve(app)
+            icon = icon_manager.get_icon_for_app(app, icon_hint)
+
+            icon_item = QtWidgets.QTableWidgetItem()
+            icon_item.setIcon(icon)
+            name_item = QtWidgets.QTableWidgetItem(display_name)
+            time_item = QtWidgets.QTableWidgetItem(str(datetime.timedelta(seconds=int(seconds))))
+
+            self.table.setItem(row_idx, 0, icon_item)
+            self.table.setItem(row_idx, 1, name_item)
+            self.table.setItem(row_idx, 2, time_item)
