@@ -44,7 +44,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 import map_resolve
-from statistics_dialog import StatisticsDialog
+from statistics import StatisticsPage
 from data_manager import DataManager
 
 if getattr(sys, 'frozen', False):
@@ -230,7 +230,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         central_widget = QtWidgets.QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QtWidgets.QVBoxLayout(central_widget)
+        root_layout = QtWidgets.QVBoxLayout(central_widget)
+
+        self.stack = QtWidgets.QStackedWidget()
+        root_layout.addWidget(self.stack)
+        self.today_page = QtWidgets.QWidget()
+        self.stack.addWidget(self.today_page)
+
+        main_layout = QtWidgets.QVBoxLayout(self.today_page)
+        self.statistics_page = StatisticsPage(self.stack)
+        self.stack.addWidget(self.statistics_page)
+
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
@@ -259,7 +269,7 @@ class MainWindow(QtWidgets.QMainWindow):
         button_layout = QtWidgets.QHBoxLayout()
         self.btn_statistics = QtWidgets.QPushButton("Statistics")
         self.btn_statistics.setFont(QtGui.QFont("Segoe UI", 14))
-        self.btn_statistics.clicked.connect(self.open_statistics)
+        self.btn_statistics.clicked.connect(self.show_statistics)
 
         button_layout.addWidget(self.btn_statistics)
         self.btn_exit = QtWidgets.QPushButton("Quit")
@@ -273,7 +283,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.from_date.setVisible(False)
         self.to_date.setVisible(False)
-        self.btn_statistics.clicked.connect(self.open_statistics)
 
         self.btn_exit.clicked.connect(self.exit_app)
 
@@ -298,10 +307,6 @@ class MainWindow(QtWidgets.QMainWindow):
         formatted_total = str(datetime.timedelta(seconds=int(total_seconds)))
         self.header.setText(f"Todays App Usage (Total: {formatted_total})")
 
-    def open_statistics(self):
-        dlg = StatisticsDialog(self)
-        dlg.exec_()
-
     def open_settings(self):
         dlg = SettingsDialog(self)
         # Vorbelegen der Dialogfelder mit gespeicherten Einstellungen:
@@ -317,6 +322,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 add_to_autostart()
             else:
                 remove_from_autostart()
+    def show_statistics(self):
+        self.stack.setCurrentWidget(self.statistics_page)
 
     def load_usage_from_db(self):
         today = datetime.date.today().isoformat()

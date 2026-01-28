@@ -10,6 +10,10 @@ import map_resolve
 import sys
 import os
 
+import platform
+IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
+
 try:
     if IS_WINDOWS:
         try:
@@ -65,7 +69,8 @@ class StatisticsWorker(QtCore.QObject):
         cache_key = (
             self.from_date.isoformat(),
             self.to_date.isoformat(),
-            self.aggregation
+            self.aggregation,
+            DataManager.get_data_version()
         )
 
         cached = StatisticsCache.get(cache_key)
@@ -114,13 +119,21 @@ class LoadingOverlay(QtWidgets.QWidget):
         layout.addWidget(bar)
         layout.addWidget(label)
 
-class StatisticsDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None):
+class StatisticsPage(QtWidgets.QWidget):
+    def __init__(self, stack, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Statistics")
-        self.resize(900, 600)
-
+        self.stack = stack
         layout = QtWidgets.QVBoxLayout(self)
+
+        top = QtWidgets.QHBoxLayout()
+
+        back_btn = QtWidgets.QPushButton("← Back")
+        back_btn.clicked.connect(self.go_back)
+
+        top.addWidget(back_btn)
+        top.addStretch()
+
+        layout.addLayout(top)
 
         top = QtWidgets.QHBoxLayout()
         self.range_combo = QtWidgets.QComboBox()
@@ -157,12 +170,15 @@ class StatisticsDialog(QtWidgets.QDialog):
 
         self.reload()
 
+    def go_back(self):
+        self.stack.setCurrentIndex(0)
+
     def reload(self):
         now = datetime.date.today()
 
         match self.range_combo.currentText():
             case "Week":
-                from_date = now - datetime.timedelta(days=7)
+                from_date = now - datetime.timedelta(days=6)
                 agg = "day"
             case "Month":
                 from_date = now - datetime.timedelta(days=30)

@@ -76,3 +76,7 @@ class DataManager:
         rows = c.fetchall()
         conn.close()
         return rows
+
+    @staticmethod
+    def get_data_version():
+        return os.path.getmtime(DataManager.DB_PATH)
