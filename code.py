@@ -401,7 +401,9 @@ class MainWindow(QtWidgets.QMainWindow):
             display_usage[self.current_process] = display_usage.get(self.current_process, 0) + delta
 
         total = sum(display_usage.values())
-        v_scroll = self.table.verticalScrollBar().value()
+        scroll_bar = self.table.verticalScrollBar()
+        old_max = scroll_bar.maximum()
+        scroll_ratio = scroll_bar.value() / old_max if old_max > 0 else 0
         self.table.setRowCount(0)
         for app, seconds in sorted(display_usage.items(), key=lambda x: x[1], reverse=True):
             percentage = (seconds / total * 100) if total > 0 else 0
@@ -431,7 +433,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.table.setCellWidget(row, 3, progress)
 
         self.table.resizeRowsToContents()
-        self.table.verticalScrollBar().setValue(v_scroll)
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: scroll_bar.setValue(int(scroll_bar.maximum() * scroll_ratio))
+        )
 
     def exit_app(self):
         now = datetime.datetime.now()
