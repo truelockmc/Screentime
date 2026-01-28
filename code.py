@@ -408,42 +408,47 @@ class MainWindow(QtWidgets.QMainWindow):
             display_usage[self.current_process] = display_usage.get(self.current_process, 0) + delta
 
         total = sum(display_usage.values())
-        scroll_bar = self.table.verticalScrollBar()
-        old_max = scroll_bar.maximum()
-        scroll_ratio = scroll_bar.value() / old_max if old_max > 0 else 0
-        self.table.setRowCount(0)
-        for app, seconds in sorted(display_usage.items(), key=lambda x: x[1], reverse=True):
-            percentage = (seconds / total * 100) if total > 0 else 0
-            formatted_time = str(datetime.timedelta(seconds=int(seconds)))
-            row = self.table.rowCount()
-            self.table.insertRow(row)
+        if total == 0:
+            return
 
+        sorted_apps = sorted(display_usage.items(), key=lambda x: x[1], reverse=True)
+
+        while self.table.rowCount() < len(sorted_apps):
+            self.table.insertRow(self.table.rowCount())
+            for col in range(4):
+                if col == 3:
+                    progress = QtWidgets.QProgressBar()
+                    progress.setMinimum(0)
+                    progress.setMaximum(100)
+                    progress.setAlignment(QtCore.Qt.AlignCenter)
+                    self.table.setCellWidget(self.table.rowCount()-1, col, progress)
+                else:
+                    self.table.setItem(self.table.rowCount()-1, col, QtWidgets.QTableWidgetItem())
+
+        scroll_bar = self.table.verticalScrollBar()
+        scroll_value_before = scroll_bar.value()
+
+        for row, (app, seconds) in enumerate(sorted_apps):
             display_name, icon_hint = app_mapping.resolve(app)
             display_name = display_name.title()
+            percentage = (seconds / total * 100)
+            formatted_time = str(datetime.timedelta(seconds=int(seconds)))
             icon = icon_manager.get_icon_for_app(app, icon_hint)
 
-            icon_item = QtWidgets.QTableWidgetItem()
-            icon_item.setIcon(icon)
-            name_item = QtWidgets.QTableWidgetItem(display_name)
-            time_item = QtWidgets.QTableWidgetItem(formatted_time)
-
-            progress = QtWidgets.QProgressBar()
-            progress.setMinimum(0)
-            progress.setMaximum(100)
+            self.table.item(row, 0).setIcon(icon)
+            self.table.item(row, 1).setText(display_name)
+            self.table.item(row, 2).setText(formatted_time)
+            progress: QtWidgets.QProgressBar = self.table.cellWidget(row, 3)
             progress.setValue(int(percentage))
             progress.setFormat(f"{percentage:.1f}%")
-            progress.setAlignment(QtCore.Qt.AlignCenter)
 
-            self.table.setItem(row, 0, icon_item)
-            self.table.setItem(row, 1, name_item)
-            self.table.setItem(row, 2, time_item)
-            self.table.setCellWidget(row, 3, progress)
+        for row in range(len(sorted_apps), self.table.rowCount()):
+            self.table.setRowHidden(row, True)
 
-        self.table.resizeRowsToContents()
-        QtCore.QTimer.singleShot(
-            0,
-            lambda: scroll_bar.setValue(int(scroll_bar.maximum() * scroll_ratio))
-        )
+        for row in range(len(sorted_apps)):
+            self.table.setRowHidden(row, False)
+
+        QtCore.QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_value_before))
 
     def exit_app(self):
         now = datetime.datetime.now()
