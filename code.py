@@ -47,6 +47,19 @@ import map_resolve
 from statistics import StatisticsPage
 from data_manager import DataManager
 
+import argparse
+
+parser = argparse.ArgumentParser(
+    prog=os.path.basename(sys.argv[0]),
+    description="Screen Time application",
+)
+parser.add_argument('--hidden', action='store_true', help='Start hidden (no UI)')
+args, remaining_argv = parser.parse_known_args()
+
+if '-h' in sys.argv or '--help' in sys.argv:
+    parser.print_help()
+    sys.exit(0)
+
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
@@ -77,29 +90,41 @@ def add_to_autostart():
     try:
         if IS_WINDOWS:
             exe_path = get_executable_path()
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                 r"Software\Microsoft\Windows\CurrentVersion\Run",
-                                 0, winreg.KEY_SET_VALUE)
-            winreg.SetValueEx(key, "ScreenTimeApp", 0, winreg.REG_SZ, exe_path)
+            start_with_ui = QtCore.QSettings("true_lock", "Screen Time").value("start_with_ui", True, type=bool)
+            cmd = f'"{exe_path}"'
+            if not start_with_ui:
+                cmd += " --hidden"
+
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0, winreg.KEY_SET_VALUE
+            )
+            winreg.SetValueEx(key, "ScreenTimeApp", 0, winreg.REG_SZ, cmd)
             winreg.CloseKey(key)
             logger.info("Autostart (Windows) hinzugefügt.")
+
         elif IS_LINUX:
             exe_path = get_executable_path()
+            start_with_ui = QtCore.QSettings("true_lock", "Screen Time").value("start_with_ui", True, type=bool)
+
             autostart_dir = Path.home() / ".config" / "autostart"
             autostart_dir.mkdir(parents=True, exist_ok=True)
+
             desktop_file = autostart_dir / "screentime.desktop"
             content = f"""[Desktop Entry]
 Type=Application
 Name=ScreenTimeApp
-Exec="{exe_path}"
+Exec="{exe_path}"{' --hidden' if not start_with_ui else ''}
 X-GNOME-Autostart-enabled=true
 """
             desktop_file.write_text(content, encoding="utf-8")
-            logger.info("Autostart (Linux .desktop) hinzugefügt: %s", desktop_file)
+            logger.info("Autostart (Linux .desktop) added: %s", desktop_file)
+
         else:
-            logger.warning("Autostart wird auf dieser Plattform nicht unterstützt.")
+            logger.warning("Autostart is not yet supported on this Platform.")
     except Exception:
-        logger.exception("Fehler beim Hinzufügen zum Autostart:")
+        logger.exception("Error whilst trying to create an Autostart:")
 
 def remove_from_autostart():
     try:
@@ -201,8 +226,12 @@ class SettingsDialog(QtWidgets.QDialog):
         self.chk_autostart = QtWidgets.QCheckBox("Open on Startup")
         self.chk_autostart.setChecked(True)  # active by default
         layout.addWidget(self.chk_autostart)
-        self.chk_option = QtWidgets.QCheckBox("Option A")
-        layout.addWidget(self.chk_option)
+        self.chk_start_with_ui = QtWidgets.QCheckBox("Start with UI when autostarting")
+        layout.addWidget(self.chk_start_with_ui)
+        start_with_ui = self.parent().qsettings.value("start_with_ui", True, type=bool)
+        self.chk_start_with_ui.setChecked(start_with_ui)
+        self.chk_start_with_ui.setEnabled(self.chk_autostart.isChecked())
+        self.chk_autostart.toggled.connect(self.chk_start_with_ui.setEnabled)
         btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         btn_box.accepted.connect(self.accept)
         btn_box.rejected.connect(self.reject)
@@ -210,7 +239,7 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def get_settings(self):
         return {"autostart": self.chk_autostart.isChecked(),
-                "option_a": self.chk_option.isChecked()}
+                "start_with_ui": self.chk_start_with_ui.isChecked()}
 
 ########################################################################
 # Hauptfenster der Anwendung
@@ -312,16 +341,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # Vorbelegen der Dialogfelder mit gespeicherten Einstellungen:
         autostart_enabled = self.qsettings.value("autostart", True, type=bool)
         dlg.chk_autostart.setChecked(autostart_enabled)
-        option_a = self.qsettings.value("option_a", False, type=bool)
-        dlg.chk_option.setChecked(option_a)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             settings = dlg.get_settings()
             self.qsettings.setValue("autostart", settings["autostart"])
-            self.qsettings.setValue("option_a", settings["option_a"])
+            self.qsettings.setValue("start_with_ui", settings["start_with_ui"])
             if settings["autostart"]:
                 add_to_autostart()
             else:
                 remove_from_autostart()
+
     def show_statistics(self):
         self.stack.setCurrentWidget(self.statistics_page)
 
@@ -498,10 +526,16 @@ except Exception:
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     app.setFont(QtGui.QFont("Segoe UI", 12))
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+
     window = MainWindow()
-    window.show()
+
+    if not args.hidden:
+        window.show()
+    else:
+        window.hide()
     sys.exit(app.exec_())
 
 if __name__ == "__main__":
