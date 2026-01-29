@@ -230,7 +230,7 @@ class StatisticsPage(QtWidgets.QWidget):
 
             icon_item = QtWidgets.QTableWidgetItem()
             icon_item.setIcon(icon)
-            name_item = QtWidgets.QTableWidgetItem(display_name)
+            name_item = QtWidgets.QTableWidgetItem(display_name.title())
             time_item = QtWidgets.QTableWidgetItem(str(datetime.timedelta(seconds=int(seconds))))
 
             self.table.setItem(row_idx, 0, icon_item)
