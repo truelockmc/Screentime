@@ -270,6 +270,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statistics_page = StatisticsPage(self.stack)
         self.stack.addWidget(self.statistics_page)
 
+        self.stack.currentChanged.connect(self.on_stack_changed)
+
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
@@ -350,6 +352,14 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 remove_from_autostart()
 
+    def on_stack_changed(self, index: int):
+        try:
+            widget = self.stack.widget(index)
+            if widget is self.statistics_page:
+                self.statistics_page.reload()
+        except Exception:
+            pass
+
     def show_statistics(self):
         self.stack.setCurrentWidget(self.statistics_page)
 
@@ -390,6 +400,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def show_normal(self):
         self.show()
         self.setWindowState(QtCore.Qt.WindowNoState)
+        try:
+            if self.stack.currentWidget() is self.statistics_page:
+                self.statistics_page.reload()
+        except Exception:
+            pass
 
     def update_total_usage(self):
         total_seconds = sum(self.usage_today.values())

@@ -174,6 +174,9 @@ class StatisticsPage(QtWidgets.QWidget):
         self.stack.setCurrentIndex(0)
 
     def reload(self):
+        thr = getattr(self, "_statistics_thread", None)
+        if isinstance(thr, QtCore.QThread) and thr.isRunning():
+            return
         now = datetime.date.today()
 
         match self.range_combo.currentText():
