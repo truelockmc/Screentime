@@ -330,6 +330,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.update_tracking)
         self.timer.start()
+        self._last_display_usage = {}
 
         DataManager.initialize_database()
         self.load_usage_from_db()
@@ -445,6 +446,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_table(live_update=False)
 
     def update_table(self, live_update=False):
+        if not self.isVisible():
+            return
+
         display_usage = self.usage_today.copy()
         if live_update and self.current_process:
             delta = (datetime.datetime.now() - self.last_switch_time).total_seconds()
@@ -452,22 +456,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
         total = sum(display_usage.values())
         if total == 0:
+            self.update_total_usage()
             return
 
-        sorted_apps = sorted(display_usage.items(), key=lambda x: x[1], reverse=True)
+        self.update_total_usage()
 
+        sorted_apps = sorted(display_usage.items(), key=lambda x: x[1], reverse=True)
         while self.table.rowCount() < len(sorted_apps):
-            self.table.insertRow(self.table.rowCount())
+            row_index = self.table.rowCount()
+            self.table.insertRow(row_index)
             for col in range(4):
                 if col == 3:
                     progress = QtWidgets.QProgressBar()
                     progress.setMinimum(0)
                     progress.setMaximum(100)
                     progress.setAlignment(QtCore.Qt.AlignCenter)
-                    self.table.setCellWidget(self.table.rowCount()-1, col, progress)
+                    self.table.setCellWidget(row_index, col, progress)
                 else:
-                    self.table.setItem(self.table.rowCount()-1, col, QtWidgets.QTableWidgetItem())
+                    self.table.setItem(row_index, col, QtWidgets.QTableWidgetItem())
 
+        new_display_cache = {}
         scroll_bar = self.table.verticalScrollBar()
         scroll_value_before = scroll_bar.value()
 
@@ -478,20 +486,42 @@ class MainWindow(QtWidgets.QMainWindow):
             formatted_time = str(datetime.timedelta(seconds=int(seconds)))
             icon = icon_manager.get_icon_for_app(app, icon_hint)
 
-            self.table.item(row, 0).setIcon(icon)
-            self.table.item(row, 1).setText(display_name)
-            self.table.item(row, 2).setText(formatted_time)
-            progress: QtWidgets.QProgressBar = self.table.cellWidget(row, 3)
-            progress.setValue(int(percentage))
-            progress.setFormat(f"{percentage:.1f}%")
+            last_seconds = self._last_display_usage.get(app)
+            need_update = (last_seconds is None) or (abs(last_seconds - seconds) >= 0.5)
+
+            if need_update:
+                item_icon = self.table.item(row, 0)
+                if item_icon is None:
+                    item_icon = QtWidgets.QTableWidgetItem()
+                    self.table.setItem(row, 0, item_icon)
+                item_icon.setIcon(icon)
+
+                item_name = self.table.item(row, 1)
+                if item_name is None:
+                    item_name = QtWidgets.QTableWidgetItem()
+                    self.table.setItem(row, 1, item_name)
+                item_name.setText(display_name)
+
+                item_time = self.table.item(row, 2)
+                if item_time is None:
+                    item_time = QtWidgets.QTableWidgetItem()
+                    self.table.setItem(row, 2, item_time)
+                item_time.setText(formatted_time)
+
+                progress: QtWidgets.QProgressBar = self.table.cellWidget(row, 3)
+                if progress:
+                    progress.setValue(int(percentage))
+                    progress.setFormat(f"{percentage:.1f}%")
+
+            self.table.setRowHidden(row, False)
+            new_display_cache[app] = seconds
 
         for row in range(len(sorted_apps), self.table.rowCount()):
             self.table.setRowHidden(row, True)
 
-        for row in range(len(sorted_apps)):
-            self.table.setRowHidden(row, False)
-
         QtCore.QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_value_before))
+
+        self._last_display_usage = new_display_cache
 
     def exit_app(self):
         now = datetime.datetime.now()
