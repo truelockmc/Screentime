@@ -177,25 +177,29 @@ class StatisticsPage(QtWidgets.QWidget):
 
         layout.addLayout(top)
 
-        self.total_label = QtWidgets.QLabel("Total Usage: 0h")
-        self.total_label.setFont(QtGui.QFont("Segoe UI", 14))
-        self.total_label.setStyleSheet("font-weight: bold; color: #333;")
-        layout.addWidget(self.total_label)
-
         top = QtWidgets.QHBoxLayout()
+
+        top.addWidget(QtWidgets.QLabel("Range:"))
+
         self.range_combo = QtWidgets.QComboBox()
         self.range_combo.addItems(["Week", "Month", "Year", "Custom"])
+        self.range_combo.setMinimumWidth(120)
         self.range_combo.currentTextChanged.connect(self.reload)
+        top.addWidget(self.range_combo)
 
         self.from_date = QtWidgets.QDateEdit(calendarPopup=True)
         self.to_date = QtWidgets.QDateEdit(calendarPopup=True)
         self.from_date.setVisible(False)
         self.to_date.setVisible(False)
 
-        top.addWidget(QtWidgets.QLabel("Range:"))
-        top.addWidget(self.range_combo)
         top.addWidget(self.from_date)
         top.addWidget(self.to_date)
+        top.addStretch()
+
+        self.total_label = QtWidgets.QLabel("Total Usage: 0h")
+        self.total_label.setFont(QtGui.QFont("Segoe UI", 16, QtGui.QFont.Bold))
+        self.total_label.setStyleSheet("color: white;")
+        top.addWidget(self.total_label)
 
         layout.addLayout(top)
 
