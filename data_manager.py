@@ -1,19 +1,19 @@
 #!/home/user/venv/bin/python
+import datetime
+import logging
 import os
 import sqlite3
-import datetime
 import sys
-import logging
 
-if getattr(sys, 'frozen', False):
+if getattr(sys, "frozen", False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 log_file = os.path.join(BASE_DIR, "log.txt")
 logging.basicConfig(
-    #level=logging.DEBUG,        # enable debug mode
-    level=logging.CRITICAL, # disable debug mode
+    # level=logging.DEBUG,        # enable debug mode
+    level=logging.CRITICAL,  # disable debug mode
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -23,8 +23,8 @@ logger.info("Starting...")
 # Database Manager
 ########################################################################
 
-class DataManager:
 
+class DataManager:
     DB_PATH = os.path.join(BASE_DIR, "usageData.db")
 
     @staticmethod
@@ -54,12 +54,15 @@ class DataManager:
 
         conn = sqlite3.connect(DataManager.DB_PATH)
         c = conn.cursor()
-        c.execute("""
+        c.execute(
+            """
             INSERT INTO DailyUsage (date, app_name, duration_seconds)
             VALUES (?, ?, ?)
             ON CONFLICT(date, app_name)
             DO UPDATE SET duration_seconds = duration_seconds + ?
-        """, (date, app_name, seconds, seconds))
+        """,
+            (date, app_name, seconds, seconds),
+        )
         conn.commit()
         conn.close()
 
@@ -67,12 +70,15 @@ class DataManager:
     def get_daily_usage(from_date, to_date):
         conn = sqlite3.connect(DataManager.DB_PATH)
         c = conn.cursor()
-        c.execute("""
+        c.execute(
+            """
             SELECT date, app_name, duration_seconds
             FROM DailyUsage
             WHERE date BETWEEN ? AND ?
             ORDER BY date
-        """, (from_date, to_date))
+        """,
+            (from_date, to_date),
+        )
         rows = c.fetchall()
         conn.close()
         return rows

@@ -1,16 +1,17 @@
 #!/home/user/venv/bin/python
 import datetime
-from collections import defaultdict
-from PyQt5 import QtWidgets, QtCore
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from data_manager import DataManager
-import map_resolve
-
-import sys
 import os
-
 import platform
+import sys
+from collections import defaultdict
+
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from PyQt5 import QtCore, QtGui, QtWidgets
+
+import map_resolve
+from data_manager import DataManager
+
 IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
 
@@ -26,24 +27,23 @@ try:
     icon_manager = PlatformIconManager()
 
 except Exception:
+
     class _FallbackIconManager:
-        def get_icon_for_app(
-            self,
-            app_name: str,
-            icon_hint: str | None = None
-        ):
+        def get_icon_for_app(self, app_name: str, icon_hint: str | None = None):
             return QtWidgets.QApplication.style().standardIcon(
                 QtWidgets.QStyle.SP_FileIcon
             )
+
     icon_manager = _FallbackIconManager()
 
-if getattr(sys, 'frozen', False):
+if getattr(sys, "frozen", False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 MAPPING_PATH = os.path.join(BASE_DIR, "map.json")
 app_mapping = map_resolve.AppMapping(MAPPING_PATH)
+
 
 class StatisticsCache:
     _cache = {}
@@ -56,8 +56,11 @@ class StatisticsCache:
     def set(cls, key, value):
         cls._cache[key] = value
 
+
 class StatisticsWorker(QtCore.QObject):
-    finished = QtCore.pyqtSignal(dict, dict)  # (time_series, per_app)
+    finished = QtCore.pyqtSignal(
+        dict, dict, float
+    )  # (time_series, per_app, total_seconds)
 
     def __init__(self, from_date, to_date, aggregation):
         super().__init__()
@@ -70,21 +73,21 @@ class StatisticsWorker(QtCore.QObject):
             self.from_date.isoformat(),
             self.to_date.isoformat(),
             self.aggregation,
-            DataManager.get_data_version()
+            DataManager.get_data_version(),
         )
 
         cached = StatisticsCache.get(cache_key)
         if cached:
-            self.finished.emit(cached["time_series"], cached["per_app"])
+            self.finished.emit(
+                cached["time_series"], cached["per_app"], cached["total_seconds"]
+            )
             return
 
         rows = DataManager.get_daily_usage(
-            self.from_date.isoformat(),
-            self.to_date.isoformat()
+            self.from_date.isoformat(), self.to_date.isoformat()
         )
 
         time_series = defaultdict(float)
-
         per_app = defaultdict(float)
 
         for date, app_name, seconds in rows:
@@ -96,11 +99,49 @@ class StatisticsWorker(QtCore.QObject):
             else:  # month
                 bucket_key = date[:7]
             time_series[bucket_key] += seconds
-
             per_app[app_name] += seconds
 
-        StatisticsCache.set(cache_key, {"time_series": time_series, "per_app": per_app})
-        self.finished.emit(time_series, per_app)
+        # Fill missing days/weeks/months with 0
+        if self.aggregation == "day":
+            current = self.from_date
+            while current <= self.to_date:
+                date_str = current.isoformat()
+                if date_str not in time_series:
+                    time_series[date_str] = 0
+                current += datetime.timedelta(days=1)
+        elif self.aggregation == "week":
+            current = self.from_date
+            while current <= self.to_date:
+                y, w, _ = current.isocalendar()
+                week_key = f"{y}-W{w:02d}"
+                if week_key not in time_series:
+                    time_series[week_key] = 0
+                current += datetime.timedelta(weeks=1)
+        else:  # month
+            current = self.from_date
+            while current <= self.to_date:
+                month_key = current.strftime("%Y-%m")
+                if month_key not in time_series:
+                    time_series[month_key] = 0
+                # Move to next month
+                if current.month == 12:
+                    current = current.replace(year=current.year + 1, month=1)
+                else:
+                    current = current.replace(month=current.month + 1)
+
+        # Calculate total seconds
+        total_seconds = sum(time_series.values())
+
+        StatisticsCache.set(
+            cache_key,
+            {
+                "time_series": time_series,
+                "per_app": per_app,
+                "total_seconds": total_seconds,
+            },
+        )
+        self.finished.emit(time_series, per_app, total_seconds)
+
 
 class LoadingOverlay(QtWidgets.QWidget):
     def __init__(self, parent):
@@ -119,6 +160,7 @@ class LoadingOverlay(QtWidgets.QWidget):
         layout.addWidget(bar)
         layout.addWidget(label)
 
+
 class StatisticsPage(QtWidgets.QWidget):
     def __init__(self, stack, parent=None):
         super().__init__(parent)
@@ -134,6 +176,11 @@ class StatisticsPage(QtWidgets.QWidget):
         top.addStretch()
 
         layout.addLayout(top)
+
+        self.total_label = QtWidgets.QLabel("Total Usage: 0h")
+        self.total_label.setFont(QtGui.QFont("Segoe UI", 14))
+        self.total_label.setStyleSheet("font-weight: bold; color: #333;")
+        layout.addWidget(self.total_label)
 
         top = QtWidgets.QHBoxLayout()
         self.range_combo = QtWidgets.QComboBox()
@@ -160,7 +207,9 @@ class StatisticsPage(QtWidgets.QWidget):
         self.table = QtWidgets.QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Icon", "App", "Total Time"])
-        self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(
+            1, QtWidgets.QHeaderView.Stretch
+        )
 
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         layout.addWidget(self.table, stretch=1)
@@ -212,7 +261,11 @@ class StatisticsPage(QtWidgets.QWidget):
         self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
 
-    def on_ready(self, time_series, per_app):
+    def on_ready(self, time_series, per_app, total_seconds):
+
+        formatted_total = str(datetime.timedelta(seconds=int(total_seconds)))
+        self.total_label.setText(f"Total Usage: {formatted_total}")
+
         self.overlay.hide()
         self.figure.clear()
         ax = self.figure.add_subplot(111)
@@ -225,7 +278,9 @@ class StatisticsPage(QtWidgets.QWidget):
         self.canvas.draw()
 
         self.table.setRowCount(0)
-        for row_idx, (app, seconds) in enumerate(sorted(per_app.items(), key=lambda x: x[1], reverse=True)):
+        for row_idx, (app, seconds) in enumerate(
+            sorted(per_app.items(), key=lambda x: x[1], reverse=True)
+        ):
             self.table.insertRow(row_idx)
 
             display_name, icon_hint = app_mapping.resolve(app)
@@ -234,7 +289,9 @@ class StatisticsPage(QtWidgets.QWidget):
             icon_item = QtWidgets.QTableWidgetItem()
             icon_item.setIcon(icon)
             name_item = QtWidgets.QTableWidgetItem(display_name.title())
-            time_item = QtWidgets.QTableWidgetItem(str(datetime.timedelta(seconds=int(seconds))))
+            time_item = QtWidgets.QTableWidgetItem(
+                str(datetime.timedelta(seconds=int(seconds)))
+            )
 
             self.table.setItem(row_idx, 0, icon_item)
             self.table.setItem(row_idx, 1, name_item)

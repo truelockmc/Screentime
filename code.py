@@ -1,7 +1,7 @@
 #!/home/user/venv/bin/python
-import sys
 import os
 import platform
+import sys
 from pathlib import Path
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -9,11 +9,13 @@ IS_LINUX = platform.system() == "Linux"
 
 if IS_WINDOWS:
     import ctypes
-    from ctypes import wintypes
     import winreg
+    from ctypes import wintypes
+
     import extraction
 else:
     import subprocess
+
     extraction = None
 
 try:
@@ -22,45 +24,41 @@ except Exception:
     print("falling back on xdotool")
     get_active_app = None
 
-import sqlite3
 import datetime
-import psutil
-from collections import defaultdict
 import logging
-
-from PyQt5.QtGui import QIcon
-
-from PyQt5.QtCore import QByteArray, QBuffer, QIODevice
-from PyQt5 import QtWidgets, QtGui, QtCore
-from PIL import Image
-from io import BytesIO
-import qdarkstyle
+import sqlite3
+from collections import defaultdict
 
 # Matplotlib in PyQt5 einbetten
 import matplotlib
+import psutil
+import qdarkstyle
+from PIL import Image
+from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5.QtGui import QIcon
 
-matplotlib.use('Qt5Agg')
+matplotlib.use("Qt5Agg")
+import argparse
+from statistics import StatisticsPage
+
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 import map_resolve
-from statistics import StatisticsPage
 from data_manager import DataManager
-
-import argparse
 
 parser = argparse.ArgumentParser(
     prog=os.path.basename(sys.argv[0]),
     description="Screen Time application",
 )
-parser.add_argument('--hidden', action='store_true', help='Start hidden (no UI)')
+parser.add_argument("--hidden", action="store_true", help="Start hidden (no UI)")
 args, remaining_argv = parser.parse_known_args()
 
-if '-h' in sys.argv or '--help' in sys.argv:
+if "-h" in sys.argv or "--help" in sys.argv:
     parser.print_help()
     sys.exit(0)
 
-if getattr(sys, 'frozen', False):
+if getattr(sys, "frozen", False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -74,8 +72,8 @@ app_mapping = map_resolve.AppMapping(MAPPING_PATH)
 
 log_file = os.path.join(BASE_DIR, "log.txt")
 logging.basicConfig(
-    #level=logging.DEBUG,        # enable debug mode
-    level=logging.CRITICAL, # disable debug mode
+    # level=logging.DEBUG,        # enable debug mode
+    level=logging.CRITICAL,  # disable debug mode
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -83,14 +81,20 @@ logger.info("Starting...")
 
 # Startup Features
 
+
 def get_executable_path():
-    return sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
+    return (
+        sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
+    )
+
 
 def add_to_autostart():
     try:
         if IS_WINDOWS:
             exe_path = get_executable_path()
-            start_with_ui = QtCore.QSettings("true_lock", "Screen Time").value("start_with_ui", True, type=bool)
+            start_with_ui = QtCore.QSettings("true_lock", "Screen Time").value(
+                "start_with_ui", True, type=bool
+            )
             cmd = f'"{exe_path}"'
             if not start_with_ui:
                 cmd += " --hidden"
@@ -98,7 +102,8 @@ def add_to_autostart():
             key = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
                 r"Software\Microsoft\Windows\CurrentVersion\Run",
-                0, winreg.KEY_SET_VALUE
+                0,
+                winreg.KEY_SET_VALUE,
             )
             winreg.SetValueEx(key, "ScreenTimeApp", 0, winreg.REG_SZ, cmd)
             winreg.CloseKey(key)
@@ -106,7 +111,9 @@ def add_to_autostart():
 
         elif IS_LINUX:
             exe_path = get_executable_path()
-            start_with_ui = QtCore.QSettings("true_lock", "Screen Time").value("start_with_ui", True, type=bool)
+            start_with_ui = QtCore.QSettings("true_lock", "Screen Time").value(
+                "start_with_ui", True, type=bool
+            )
 
             autostart_dir = Path.home() / ".config" / "autostart"
             autostart_dir.mkdir(parents=True, exist_ok=True)
@@ -115,7 +122,7 @@ def add_to_autostart():
             content = f"""[Desktop Entry]
 Type=Application
 Name=ScreenTimeApp
-Exec="{exe_path}"{' --hidden' if not start_with_ui else ''}
+Exec="{exe_path}"{" --hidden" if not start_with_ui else ""}
 X-GNOME-Autostart-enabled=true
 """
             desktop_file.write_text(content, encoding="utf-8")
@@ -126,12 +133,16 @@ X-GNOME-Autostart-enabled=true
     except Exception:
         logger.exception("Error whilst trying to create an Autostart:")
 
+
 def remove_from_autostart():
     try:
         if IS_WINDOWS:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                 r"Software\Microsoft\Windows\CurrentVersion\Run",
-                                 0, winreg.KEY_SET_VALUE)
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0,
+                winreg.KEY_SET_VALUE,
+            )
             winreg.DeleteValue(key, "ScreenTimeApp")
             winreg.CloseKey(key)
             logger.info("Autostart (Windows) entfernt.")
@@ -145,9 +156,11 @@ def remove_from_autostart():
     except Exception:
         logger.exception("Fehler beim Entfernen des Autostarts:")
 
+
 ########################################################################
 # Ermitteln des aktuell aktiven Prozesses
 ########################################################################
+
 
 def get_active_window_process_name():
     if IS_WINDOWS:
@@ -170,27 +183,32 @@ def get_active_window_process_name():
                     info = get_active_app(mapping_path=MAPPING_PATH)
                 except Exception:
                     info = {}
-                name = info.get('app_name') or info.get('app_id') or None
+                name = info.get("app_name") or info.get("app_id") or None
                 if name:
                     return name
-                proc_path = info.get('proc_path')
+                proc_path = info.get("proc_path")
                 if proc_path:
                     try:
                         return Path(proc_path).name
                     except Exception:
                         pass
-                wm_pid = info.get('wm_pid')
+                wm_pid = info.get("wm_pid")
                 if wm_pid:
                     try:
                         return psutil.Process(int(wm_pid)).name()
                     except Exception:
                         pass
             try:
-                out = subprocess.check_output(["xdotool", "getwindowfocus", "getwindowpid"], stderr=subprocess.DEVNULL)
+                out = subprocess.check_output(
+                    ["xdotool", "getwindowfocus", "getwindowpid"],
+                    stderr=subprocess.DEVNULL,
+                )
                 pid = int(out.strip())
                 return psutil.Process(pid).name()
             except FileNotFoundError:
-                logger.warning("xdotool nicht gefunden; aktives Fenster unter Linux nicht bestimmt.")
+                logger.warning(
+                    "xdotool nicht gefunden; aktives Fenster unter Linux nicht bestimmt."
+                )
                 return ""
             except Exception:
                 logger.exception("Fehler beim Ermitteln des aktiven Fensters (Linux):")
@@ -201,21 +219,31 @@ def get_active_window_process_name():
     else:
         return ""
 
+
 # Dont count time on Lockscreen
 def is_screen_locked_linux():
     try:
-        out = subprocess.check_output([
-            "gdbus", "call",
-            "--session",
-            "--dest", "org.gnome.ScreenSaver",
-            "--object-path", "/org/gnome/ScreenSaver",
-            "--method", "org.gnome.ScreenSaver.GetActive"
-        ], stderr=subprocess.DEVNULL)
+        out = subprocess.check_output(
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--dest",
+                "org.gnome.ScreenSaver",
+                "--object-path",
+                "/org/gnome/ScreenSaver",
+                "--method",
+                "org.gnome.ScreenSaver.GetActive",
+            ],
+            stderr=subprocess.DEVNULL,
+        )
         return "true" in out.decode().lower()
     except Exception:
         return False
 
+
 # Settings
+
 
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -232,18 +260,24 @@ class SettingsDialog(QtWidgets.QDialog):
         self.chk_start_with_ui.setChecked(start_with_ui)
         self.chk_start_with_ui.setEnabled(self.chk_autostart.isChecked())
         self.chk_autostart.toggled.connect(self.chk_start_with_ui.setEnabled)
-        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        btn_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
         btn_box.accepted.connect(self.accept)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
 
     def get_settings(self):
-        return {"autostart": self.chk_autostart.isChecked(),
-                "start_with_ui": self.chk_start_with_ui.isChecked()}
+        return {
+            "autostart": self.chk_autostart.isChecked(),
+            "start_with_ui": self.chk_start_with_ui.isChecked(),
+        }
+
 
 ########################################################################
 # Hauptfenster der Anwendung
 ########################################################################
+
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -281,14 +315,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.table = QtWidgets.QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["", "App", "Time used", "Ratio"])
-        self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(
+            1, QtWidgets.QHeaderView.Stretch
+        )
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setStyleSheet("font-size: 14pt;")
         main_layout.addWidget(self.table)
 
         # Settings Button oben rechts hinzufügen:
         self.settings_button = QtWidgets.QToolButton(self)
-        self.settings_button.setText("⚙")  # alternativ: self.settings_button.setIcon(QtGui.QIcon("path/to/settings_icon.png"))
+        self.settings_button.setText(
+            "⚙"
+        )  # alternativ: self.settings_button.setIcon(QtGui.QIcon("path/to/settings_icon.png"))
         self.settings_button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         self.settings_button.setFixedSize(32, 32)
         self.settings_button.clicked.connect(self.open_settings)
@@ -370,11 +408,14 @@ class MainWindow(QtWidgets.QMainWindow):
         conn = sqlite3.connect(DataManager.DB_PATH)
         c = conn.cursor()
 
-        c.execute("""
+        c.execute(
+            """
             SELECT app_name, duration_seconds
             FROM DailyUsage
             WHERE date = ?
-        """, (today,))
+        """,
+            (today,),
+        )
 
         for app, seconds in c.fetchall():
             self.usage_today[app] += seconds
@@ -383,7 +424,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def setup_tray_icon(self):
         self.tray_icon = QtWidgets.QSystemTrayIcon(self)
-        self.tray_icon.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_ComputerIcon))
+        self.tray_icon.setIcon(
+            self.style().standardIcon(QtWidgets.QStyle.SP_ComputerIcon)
+        )
         self.tray_icon.setToolTip("Screen Time")
         tray_menu = QtWidgets.QMenu()
         show_action = tray_menu.addAction("Open")
@@ -427,7 +470,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         raw_active_app = get_active_window_process_name()
 
-        active_app, _icon_hint = app_mapping.resolve(raw_active_app) if raw_active_app else ("", None)
+        active_app, _icon_hint = (
+            app_mapping.resolve(raw_active_app) if raw_active_app else ("", None)
+        )
 
         if active_app == self.current_process and self.current_process:
             self.update_total_usage()
@@ -452,7 +497,9 @@ class MainWindow(QtWidgets.QMainWindow):
         display_usage = self.usage_today.copy()
         if live_update and self.current_process:
             delta = (datetime.datetime.now() - self.last_switch_time).total_seconds()
-            display_usage[self.current_process] = display_usage.get(self.current_process, 0) + delta
+            display_usage[self.current_process] = (
+                display_usage.get(self.current_process, 0) + delta
+            )
 
         total = sum(display_usage.values())
         if total == 0:
@@ -469,11 +516,17 @@ class MainWindow(QtWidgets.QMainWindow):
             label = display_name.title() if display_name else raw_app
             info = aggregated.get(label)
             if info is None:
-                aggregated[label] = {"seconds": seconds, "raw": raw_app, "icon_hint": icon_hint}
+                aggregated[label] = {
+                    "seconds": seconds,
+                    "raw": raw_app,
+                    "icon_hint": icon_hint,
+                }
             else:
                 info["seconds"] += seconds
 
-        sorted_apps = sorted(aggregated.items(), key=lambda x: x[1]["seconds"], reverse=True)
+        sorted_apps = sorted(
+            aggregated.items(), key=lambda x: x[1]["seconds"], reverse=True
+        )
 
         needed_rows = len(sorted_apps)
         self.table.setRowCount(needed_rows)
@@ -487,7 +540,7 @@ class MainWindow(QtWidgets.QMainWindow):
             raw_for_icon = info["raw"]
             icon_hint = info["icon_hint"]
 
-            percentage = (seconds / total * 100)
+            percentage = seconds / total * 100
             formatted_time = str(datetime.timedelta(seconds=int(seconds)))
             icon = icon_manager.get_icon_for_app(raw_for_icon, icon_hint)
 
@@ -533,16 +586,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.usage_today[self.current_process] += duration
             DataManager.add_daily_usage(self.current_process, duration)
 
-
         logger.info("Quitting...")
         QtWidgets.QApplication.quit()
 
     def closeEvent(self, event):
         event.ignore()
         self.hide()
-        self.tray_icon.showMessage("Screen Time",
-                                   "The App will continue to run in the Background.",
-                                   QtWidgets.QSystemTrayIcon.Information, 2000)
+        self.tray_icon.showMessage(
+            "Screen Time",
+            "The App will continue to run in the Background.",
+            QtWidgets.QSystemTrayIcon.Information,
+            2000,
+        )
+
 
 ########################################################################
 # Main
@@ -560,16 +616,15 @@ try:
     icon_manager = PlatformIconManager()
 
 except Exception:
+
     class _FallbackIconManager:
-        def get_icon_for_app(
-            self,
-            app_name: str,
-            icon_hint: str | None = None
-        ):
+        def get_icon_for_app(self, app_name: str, icon_hint: str | None = None):
             return QtWidgets.QApplication.style().standardIcon(
                 QtWidgets.QStyle.SP_FileIcon
             )
+
     icon_manager = _FallbackIconManager()
+
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
@@ -584,6 +639,7 @@ def main():
     else:
         window.hide()
     sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
     main()

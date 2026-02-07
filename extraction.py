@@ -1,12 +1,12 @@
 #!/home/user/venv/bin/python
-from ctypes import Array, byref, c_char, memset, sizeof
-from ctypes import c_int, c_void_p, POINTER
-from ctypes.wintypes import *
-from enum import Enum
 import ctypes
 import sys
-from PIL import Image
+from ctypes import POINTER, Array, byref, c_char, c_int, c_void_p, memset, sizeof
+from ctypes.wintypes import *
+from enum import Enum
 from io import BytesIO
+
+from PIL import Image
 
 BI_RGB = 0
 DIB_RGB_COLORS = 0
@@ -18,8 +18,9 @@ class ICONINFO(ctypes.Structure):
         ("xHotspot", DWORD),
         ("yHotspot", DWORD),
         ("hbmMask", HBITMAP),
-        ("hbmColor", HBITMAP)
+        ("hbmColor", HBITMAP),
     ]
+
 
 class RGBQUAD(ctypes.Structure):
     _fields_ = [
@@ -28,6 +29,7 @@ class RGBQUAD(ctypes.Structure):
         ("rgbRed", BYTE),
         ("rgbReserved", BYTE),
     ]
+
 
 class BITMAPINFOHEADER(ctypes.Structure):
     _fields_ = [
@@ -41,8 +43,9 @@ class BITMAPINFOHEADER(ctypes.Structure):
         ("biXPelsPerMeter", LONG),
         ("biYPelsPerMeter", LONG),
         ("biClrUsed", DWORD),
-        ("biClrImportant", DWORD)
+        ("biClrImportant", DWORD),
     ]
+
 
 class BITMAPINFO(ctypes.Structure):
     _fields_ = [
@@ -57,15 +60,11 @@ gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 
 gdi32.CreateCompatibleDC.argtypes = [HDC]
 gdi32.CreateCompatibleDC.restype = HDC
-gdi32.GetDIBits.argtypes = [
-    HDC, HBITMAP, UINT, UINT, LPVOID, c_void_p, UINT
-]
+gdi32.GetDIBits.argtypes = [HDC, HBITMAP, UINT, UINT, LPVOID, c_void_p, UINT]
 gdi32.GetDIBits.restype = c_int
 gdi32.DeleteObject.argtypes = [HGDIOBJ]
 gdi32.DeleteObject.restype = BOOL
-shell32.ExtractIconExW.argtypes = [
-    LPCWSTR, c_int, POINTER(HICON), POINTER(HICON), UINT
-]
+shell32.ExtractIconExW.argtypes = [LPCWSTR, c_int, POINTER(HICON), POINTER(HICON), UINT]
 shell32.ExtractIconExW.restype = UINT
 user32.GetIconInfo.argtypes = [HICON, POINTER(ICONINFO)]
 user32.GetIconInfo.restype = BOOL
@@ -82,10 +81,7 @@ class IconSize(Enum):
         """
         Return the actual (width, height) values for the specified icon size.
         """
-        size_table = {
-            IconSize.SMALL: (16, 16),
-            IconSize.LARGE: (32, 32)
-        }
+        size_table = {IconSize.SMALL: (16, 16), IconSize.LARGE: (32, 32)}
         return size_table[size]
 
 
@@ -104,7 +100,7 @@ def extract_icon(filename: str, size: IconSize) -> Array[c_char]:
         0,
         byref(hicon) if size == IconSize.LARGE else None,
         byref(hicon) if size == IconSize.SMALL else None,
-        1
+        1,
     )
     if extracted_icons != 1:
         raise ctypes.WinError()
@@ -142,6 +138,7 @@ def extract_icon(filename: str, size: IconSize) -> Array[c_char]:
     cleanup()
     return bits
 
+
 def win32_icon_to_image(icon_bits: Array[c_char], size: IconSize) -> Image:
     """
     Convert a Windows GDI bitmap to a PIL `Image` instance.
@@ -150,8 +147,12 @@ def win32_icon_to_image(icon_bits: Array[c_char], size: IconSize) -> Image:
     img = Image.frombytes("RGBA", (w, h), icon_bits, "raw", "BGRA")
     return img
 
+
 if __name__ == "__main__":
-    large_icon = extract_icon("C:/Users/User/AppData/Local/Programs/Python/Python313/python.exe", IconSize.LARGE)
+    large_icon = extract_icon(
+        "C:/Users/User/AppData/Local/Programs/Python/Python313/python.exe",
+        IconSize.LARGE,
+    )
     # Convert them to PIL/Pillow images.
     img = Image.frombytes("RGBA", (32, 32), large_icon, "raw", "BGRA")
     buffer = BytesIO()

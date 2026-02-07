@@ -1,7 +1,9 @@
 #!/home/user/venv/bin/python
 import json
 import logging
+
 logger = logging.getLogger(__name__)
+
 
 class AppMapping:
     def __init__(self, path):
@@ -25,7 +27,4 @@ class AppMapping:
         if not entry:
             return raw_name, None
 
-        return (
-            entry.get("display_name", raw_name),
-            entry.get("icon")
-        )
+        return (entry.get("display_name", raw_name), entry.get("icon"))

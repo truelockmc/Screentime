@@ -1,17 +1,16 @@
 #!/home/user/venv/bin/python
-from typing import Optional, List
+import configparser
+import logging
 import os
 import re
-from pathlib import Path
 import subprocess
-import logging
-import psutil
-import configparser
+from pathlib import Path
+from typing import List, Optional
 
-from PyQt5 import QtWidgets, QtGui
-from PyQt5.QtGui import QIcon
+import psutil
+from PyQt5 import QtGui, QtWidgets
 from PyQt5.QtCore import QByteArray
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QIcon, QPixmap
 
 logger = logging.getLogger(__name__)
 
@@ -24,20 +23,22 @@ DESKTOP_DIRS: List[Path] = [
     Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "applications",
 ]
 
+
 def _parse_desktop_file(path: Path) -> dict:
     """Return keys 'Exec', 'Icon', 'Name', 'StartupWMClass' when present."""
     result = {}
     try:
         cp = configparser.ConfigParser(interpolation=None)
-        cp.read(path, encoding='utf-8')
-        if 'Desktop Entry' in cp:
-            entry = cp['Desktop Entry']
-            for k in ('Exec', 'Icon', 'Name', 'StartupWMClass'):
+        cp.read(path, encoding="utf-8")
+        if "Desktop Entry" in cp:
+            entry = cp["Desktop Entry"]
+            for k in ("Exec", "Icon", "Name", "StartupWMClass"):
                 if k in entry:
                     result[k] = entry[k].strip()
     except Exception:
         logger.exception("Fehler beim Parsen der .desktop-Datei %s", path)
     return result
+
 
 def _find_desktop_entries_by_key(app_key: str) -> List[Path]:
     if not app_key:
@@ -98,6 +99,7 @@ def _find_desktop_entries_by_key(app_key: str) -> List[Path]:
             seen.add(str(p))
     return out
 
+
 def _icon_from_desktop_entry(desktop_path: Path) -> Optional[QIcon]:
     info = _parse_desktop_file(desktop_path)
     icon_val = info.get("Icon")
@@ -135,6 +137,7 @@ def _icon_from_desktop_entry(desktop_path: Path) -> Optional[QIcon]:
         pass
 
     return None
+
 
 def _get_icon_for_proc(proc: psutil.Process) -> Optional[QIcon]:
     try:
@@ -179,8 +182,11 @@ def _get_icon_for_proc(proc: psutil.Process) -> Optional[QIcon]:
                     if not q.isNull():
                         return q
     except Exception:
-        logger.exception("Fehler beim Laden des Icons für Prozess %s", getattr(proc, "pid", "n/a"))
+        logger.exception(
+            "Fehler beim Laden des Icons für Prozess %s", getattr(proc, "pid", "n/a")
+        )
     return None
+
 
 class ImprovedIconManager:
     def __init__(self):
@@ -195,7 +201,9 @@ class ImprovedIconManager:
     def get_icon_for_app(self, app_name: str, icon_hint: Optional[str] = None) -> QIcon:
         try:
             if not app_name:
-                return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
+                return QtWidgets.QApplication.style().standardIcon(
+                    QtWidgets.QStyle.SP_FileIcon
+                )
 
             # 1) cache
             cache_key = f"{app_name}|{icon_hint or ''}"
@@ -230,14 +238,17 @@ class ImprovedIconManager:
                     return q
 
             # 3) try processes (match name or basename)
-            for proc in psutil.process_iter(['name', 'exe', 'cmdline']):
+            for proc in psutil.process_iter(["name", "exe", "cmdline"]):
                 try:
-                    pname = proc.info.get('name') or ""
-                    pexe = proc.info.get('exe') or ""
+                    pname = proc.info.get("name") or ""
+                    pexe = proc.info.get("exe") or ""
                     if not pname and not pexe:
                         continue
                     # compare case-insensitive to app_name
-                    if pname.lower() == app_name.lower() or Path(pexe).stem.lower() == app_name.lower():
+                    if (
+                        pname.lower() == app_name.lower()
+                        or Path(pexe).stem.lower() == app_name.lower()
+                    ):
                         q = _get_icon_for_proc(proc)
                         if q and not q.isNull():
                             self._cache_icon(cache_key, q)
@@ -259,10 +270,16 @@ class ImprovedIconManager:
                 logger.exception("Fehler beim Laden von Theme-Icon für %s", app_name)
 
             # 5) final fallback: standard icon
-            fallback = QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
+            fallback = QtWidgets.QApplication.style().standardIcon(
+                QtWidgets.QStyle.SP_FileIcon
+            )
             self._cache_icon(cache_key, fallback)
             return fallback
 
         except Exception:
-            logger.exception("Fehler in ImprovedIconManager.get_icon_for_app für %s", app_name)
-            return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
+            logger.exception(
+                "Fehler in ImprovedIconManager.get_icon_for_app für %s", app_name
+            )
+            return QtWidgets.QApplication.style().standardIcon(
+                QtWidgets.QStyle.SP_FileIcon
+            )
