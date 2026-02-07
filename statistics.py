@@ -179,6 +179,11 @@ class StatisticsPage(QtWidgets.QWidget):
 
         top = QtWidgets.QHBoxLayout()
 
+        self.total_label = QtWidgets.QLabel("Total Usage: 0h")
+        self.total_label.setFont(QtGui.QFont("Segoe UI", 16, QtGui.QFont.Bold))
+        self.total_label.setStyleSheet("color: white;")
+        top.addWidget(self.total_label)
+        top.addStretch()
         top.addWidget(QtWidgets.QLabel("Range:"))
 
         self.range_combo = QtWidgets.QComboBox()
@@ -194,12 +199,6 @@ class StatisticsPage(QtWidgets.QWidget):
 
         top.addWidget(self.from_date)
         top.addWidget(self.to_date)
-        top.addStretch()
-
-        self.total_label = QtWidgets.QLabel("Total Usage: 0h")
-        self.total_label.setFont(QtGui.QFont("Segoe UI", 16, QtGui.QFont.Bold))
-        self.total_label.setStyleSheet("color: white;")
-        top.addWidget(self.total_label)
 
         layout.addLayout(top)
 
