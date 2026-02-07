@@ -41,11 +41,10 @@ matplotlib.use("Qt5Agg")
 import argparse
 from statistics import StatisticsPage
 
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-
 import map_resolve
 from data_manager import DataManager
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 parser = argparse.ArgumentParser(
     prog=os.path.basename(sys.argv[0]),
@@ -282,6 +281,7 @@ class SettingsDialog(QtWidgets.QDialog):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
+        DataManager.initialize_database()
 
         self.setWindowTitle("Screen Time")
         self.resize(900, 600)
@@ -370,7 +370,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.start()
         self._last_display_usage = {}
 
-        DataManager.initialize_database()
         self.load_usage_from_db()
 
         total_seconds = sum(self.usage_today.values())
