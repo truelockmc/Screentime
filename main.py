@@ -8,8 +8,15 @@ from pathlib import Path
 if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
     os.environ["QT_QPA_PLATFORM"] = "wayland"
 
+
+def is_wayland_session() -> bool:
+    return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+
+
 IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
+
+IS_WAYLAND = IS_LINUX and is_wayland_session()
 
 if IS_WINDOWS:
     import ctypes
@@ -373,6 +380,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.setup_tray_icon()
 
+        if IS_WAYLAND:
+            self.show_wayland_warning_once()
+
         self.timer = QtCore.QTimer()
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.update_tracking)
@@ -385,9 +395,55 @@ class MainWindow(QtWidgets.QMainWindow):
         formatted_total = str(datetime.timedelta(seconds=int(total_seconds)))
         self.header.setText(f"Todays App Usage (Total: {formatted_total})")
 
+    def show_wayland_warning_once(self):
+        shown = self.qsettings.value("wayland_warning_shown", False, type=bool)
+        if shown:
+            return
+
+        msg = QtWidgets.QMessageBox(self)
+        msg.setIcon(QtWidgets.QMessageBox.Warning)
+        msg.setWindowTitle("Wayland Limitation")
+        msg.setText(
+            "Per-application screen time tracking is not supported on Wayland.\n\n"
+            'Only total PC usage time will be tracked and stored as "Wayland PC".'
+        )
+        msg.setInformativeText(
+            "This is a technical limitation of Wayland.\n\n"
+            "See the GitHub issue for details."
+        )
+        msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
+
+        github_button = msg.addButton(
+            "View GitHub Issue", QtWidgets.QMessageBox.ActionRole
+        )
+
+        msg.exec_()
+
+        if msg.clickedButton() == github_button:
+            QtGui.QDesktopServices.openUrl(
+                QtCore.QUrl("https://github.com/truelockmc/Screentime/issues/7")
+            )
+
+        self.qsettings.setValue("wayland_warning_shown", True)
+
+    def update_wayland_tracking(self):
+        now = datetime.datetime.now()
+
+        if IS_LINUX and is_screen_locked_linux():
+            self.last_switch_time = now
+            return
+
+        duration = (now - self.last_switch_time).total_seconds()
+        if duration > 0:
+            self.usage_today["Wayland PC"] += duration
+            DataManager.add_daily_usage("Wayland PC", duration)
+
+        self.last_switch_time = now
+        self.update_total_usage()
+        self.update_table(live_update=False)
+
     def open_settings(self):
         dlg = SettingsDialog(self)
-        # Vorbelegen der Dialogfelder mit gespeicherten Einstellungen:
         autostart_enabled = self.qsettings.value("autostart", True, type=bool)
         dlg.chk_autostart.setChecked(autostart_enabled)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
@@ -464,6 +520,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.header.setText(f"Todays App Usage (Total: {formatted_total})")
 
     def update_tracking(self):
+
+        if IS_WAYLAND:
+            self.update_wayland_tracking()
+            return
 
         now = datetime.datetime.now()
 
