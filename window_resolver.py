@@ -184,7 +184,7 @@ def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str
         "proc_path": None,
     }
 
-    # 1) PID-basiert
+    # 1) PID-based
     pid = info.get("wm_pid")
     if pid:
         proc = resolve_proc_from_pid(pid)
@@ -205,7 +205,7 @@ def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str
         res["method"] = "mapping"
         return res
 
-    # 3) .desktop Suche (Flatpak/Package)
+    # 3) .desktop Search (Flatpak/Package)
     desktop = find_desktop_for_wm_class(wm_class, info.get("wm_name"))
     if desktop:
         app_id, app_name = desktop
@@ -214,7 +214,7 @@ def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str
         res["method"] = "desktop_guess"
         return res
 
-    # 4) Fallback: nur WM_CLASS/WM_NAME melden
+    # 4) Fallback: only report WM_CLASS/WM_NAME
     if wm_class:
         res["app_id"] = wm_class
         res["app_name"] = wm_class
@@ -234,7 +234,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Active window resolver test")
-    parser.add_argument("--mapping", help="Pfad zu mapping JSON Datei", default=None)
+    parser.add_argument("--mapping", help="Path to json File", default=None)
     args = parser.parse_args()
     out = get_active_app(args.mapping)
     import pprint

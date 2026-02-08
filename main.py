@@ -4,6 +4,10 @@ import platform
 import sys
 from pathlib import Path
 
+# CRITICAL: Enable Wayland support for Qt5 BEFORE importing PyQt5
+if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+    os.environ["QT_QPA_PLATFORM"] = "wayland"
+
 IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
 
@@ -45,6 +49,11 @@ import map_resolve
 from data_manager import DataManager
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+
+print(f"XDG_SESSION_TYPE: {os.environ.get('XDG_SESSION_TYPE')}")
+print(f"WAYLAND_DISPLAY: {os.environ.get('WAYLAND_DISPLAY')}")
+print(f"DISPLAY: {os.environ.get('DISPLAY')}")
+print()
 
 parser = argparse.ArgumentParser(
     prog=os.path.basename(sys.argv[0]),
