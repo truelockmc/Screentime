@@ -49,7 +49,7 @@ By default the Application runs itself on startup, you can change this in the Se
 This Program has been tested to work best on Linux with GNOME as this is the System i am using.
 It has also been tested to work on XFCE and Windows, but the App Names are not recognized as good sometimes.
 
-### Wayland
+## Wayland
 This Application does only correctly work with x11 right now, Wayland support is unlikely [more](https://github.com/truelockmc/Screentime/issues/7)
 
 ## 📝 License
