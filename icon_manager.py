@@ -3,14 +3,12 @@ import configparser
 import logging
 import os
 import re
-import subprocess
 from pathlib import Path
 from typing import List, Optional
 
 import psutil
-from PyQt5 import QtGui, QtWidgets
-from PyQt5.QtCore import QByteArray
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5 import QtWidgets
+from PyQt5.QtGui import QIcon
 
 logger = logging.getLogger(__name__)
 

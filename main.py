@@ -21,7 +21,6 @@ IS_WAYLAND = IS_LINUX and is_wayland_session()
 if IS_WINDOWS:
     import ctypes
     import winreg
-    from ctypes import wintypes
 
     import extraction
 else:
@@ -44,9 +43,7 @@ from collections import defaultdict
 import matplotlib
 import psutil
 import qdarkstyle
-from PIL import Image
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtGui import QIcon
 
 matplotlib.use("Qt5Agg")
 import argparse
@@ -54,8 +51,6 @@ from statistics import StatisticsPage
 
 import map_resolve
 from data_manager import DataManager
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 
 print(f"XDG_SESSION_TYPE: {os.environ.get('XDG_SESSION_TYPE')}")
 print(f"WAYLAND_DISPLAY: {os.environ.get('WAYLAND_DISPLAY')}")

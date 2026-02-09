@@ -1,6 +1,5 @@
 #!/home/user/venv/bin/python
 import ctypes
-import sys
 from ctypes import POINTER, Array, byref, c_char, c_int, c_void_p, memset, sizeof
 from ctypes.wintypes import *
 from enum import Enum
