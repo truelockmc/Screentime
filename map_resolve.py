@@ -1,6 +1,7 @@
 #!/home/user/venv/bin/python
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Optional, Tuple
@@ -90,6 +91,7 @@ class AppMapping:
         # Cache for dynamic Steam lookups so we don't re-read files every
         # second while a game is running.
         self._steam_cache: dict = {}
+        self._proc_steam_cache: dict = {}
         self.load()
 
     def load(self):
@@ -107,18 +109,91 @@ class AppMapping:
         # 1) Explicit entry in map.json always wins.
         entry = self.mapping.get(raw_name)
         if entry:
-            return entry.get("display_name", raw_name), entry.get("icon")
+            display = entry.get("display_name", raw_name)
+            icon = entry.get("icon")
+            # If the icon path is set but doesn't exist, fall through to
+            # dynamic lookup below so Steam icons still work.
+            if icon and not Path(icon).exists():
+                icon = None
+            if icon:
+                return display, icon
+            # display_name was set but icon needs dynamic lookup, try Steam
+            app_id = self._find_steam_app_id_for_process(raw_name)
+            if app_id:
+                _, dyn_icon = self._get_steam_info_cached(app_id)
+                return display, dyn_icon
+            return display, None
 
         # 2) Dynamic Steam lookup for keys like "steam_app_123456" that
         #    window_resolver produces when it detects a Proton/Wine game.
         if raw_name.startswith("steam_app_"):
             app_id = raw_name[len("steam_app_") :]
             if app_id.isdigit():
-                if app_id not in self._steam_cache:
-                    self._steam_cache[app_id] = _get_steam_game_info(app_id)
-                game_name, icon_path = self._steam_cache[app_id]
-                # Gracefully fall back if the appmanifest isn't found yet.
+                game_name, icon_path = self._get_steam_info_cached(app_id)
                 display = game_name if game_name else raw_name
                 return display, icon_path
 
+        # 3) Native Steam game not in map.json, try to identify via SteamAppId
+        #    from the running process (e.g. "aces", "Fishards.x86_64").
+        app_id = self._find_steam_app_id_for_process(raw_name)
+        if app_id:
+            game_name, icon_path = self._get_steam_info_cached(app_id)
+            display = game_name if game_name else raw_name
+            return display, icon_path
+
         return raw_name, None
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _get_steam_info_cached(
+        self, app_id: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        if app_id not in self._steam_cache:
+            self._steam_cache[app_id] = _get_steam_game_info(app_id)
+        return self._steam_cache[app_id]
+
+    def _find_steam_app_id_for_process(self, name: str) -> Optional[str]:
+        """Scan /proc for a running process matching `name` and return its SteamAppId."""
+        # Use a short-lived cache (cleared when app switches) to avoid
+        # scanning /proc every second for the same process name.
+        if name in self._proc_steam_cache:
+            return self._proc_steam_cache[name] or None
+        import glob
+
+        name_lower = name.lower()
+        found_id: Optional[str] = None
+        for pid_dir in glob.glob("/proc/[0-9]*/"):
+            try:
+                pid = pid_dir.rstrip("/").split("/")[-1]
+                exe = os.readlink(f"/proc/{pid}/exe")
+                if os.path.basename(exe).lower() != name_lower:
+                    continue
+                with open(f"/proc/{pid}/environ", "rb") as f:
+                    env = f.read().decode(errors="ignore")
+                for var in env.split("\x00"):
+                    if var.startswith("SteamAppId="):
+                        val = var.split("=", 1)[1].strip()
+                        if val and val.isdigit() and val != "0":
+                            found_id = val
+                            break
+                if found_id:
+                    break
+            except Exception:
+                pass
+        self._proc_steam_cache[name] = found_id or ""
+        return found_id
+
+    def save_entry(self, raw_key: str, entry: dict):
+        """Persist a single entry to map.json and update in-memory mapping."""
+        if not isinstance(self.mapping, dict):
+            self.mapping = {}
+        self.mapping[raw_key] = entry
+        try:
+            import json
+
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump(self.mapping, f, indent=2, ensure_ascii=False)
+        except Exception:
+            logger.exception("Failed to save map.json")

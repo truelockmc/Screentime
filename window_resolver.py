@@ -244,6 +244,16 @@ def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str
     # 1) PID-based
     pid = info.get("wm_pid")
     if pid:
+        # Always check SteamAppId first, works for native Linux games,
+        # Proton/Wine games and anything else Steam launches.
+        steam_app_id = _get_steam_app_id_from_environ(pid)
+        if steam_app_id:
+            key = f"steam_app_{steam_app_id}"
+            res["app_id"] = key
+            res["app_name"] = key
+            res["method"] = "steam_app_id"
+            return res
+
         proc = resolve_proc_from_pid(pid)
         if proc:
             exe_path = proc.get("exe") or ""
@@ -251,27 +261,13 @@ def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str
             res["proc_path"] = exe_path
 
             if basename and basename not in WINE_PROCESSES:
-                # Normal non-Wine process, return immediately as before.
                 res["app_id"] = basename
                 res["app_name"] = basename
                 res["method"] = "pid"
                 return res
 
-            # ----------------------------------------------------------------
-            # Wine / Proton process detected.
-            # Try to identify the actual game via the SteamAppId env-var that
-            # Steam injects into every Proton child process.
-            # ----------------------------------------------------------------
-            steam_app_id = _get_steam_app_id_from_environ(pid)
-            if steam_app_id:
-                key = f"steam_app_{steam_app_id}"
-                res["app_id"] = key
-                res["app_name"] = key
-                res["method"] = "steam_app_id"
-                return res
-
-            # No SteamAppId (non-Steam Wine game), fall through so
-            # WM_CLASS / WM_NAME resolution below can take over.
+            # Wine launcher with no SteamAppId (non-Steam Wine game),
+            # fall through to WM_CLASS / WM_NAME resolution below.
 
     # 2) Mapping (user)
     wm_class = info.get("wm_class")

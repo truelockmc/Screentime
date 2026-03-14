@@ -285,6 +285,83 @@ class SettingsDialog(QtWidgets.QDialog):
 
 
 ########################################################################
+# Customize App Dialog
+########################################################################
+
+
+class CustomizeAppDialog(QtWidgets.QDialog):
+    def __init__(self, raw_key: str, current_display: str, mapping, parent=None):
+        super().__init__(parent)
+        self.raw_key = raw_key
+        self.mapping = mapping
+        self._original_display = current_display
+
+        self.setWindowTitle(f"Customize, {current_display}")
+        self.resize(480, 160)
+        layout = QtWidgets.QFormLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        # Display name
+        self.name_edit = QtWidgets.QLineEdit()
+        entry = mapping.mapping.get(raw_key, {})
+        self.name_edit.setText(entry.get("display_name", current_display))
+        layout.addRow("Display name:", self.name_edit)
+
+        # Icon path
+        icon_row = QtWidgets.QHBoxLayout()
+        self.icon_edit = QtWidgets.QLineEdit()
+        self.icon_edit.setPlaceholderText("Path to .png / .svg  (leave empty for auto)")
+        self.icon_edit.setText(entry.get("icon", ""))
+        browse_btn = QtWidgets.QPushButton("Browse…")
+        browse_btn.setFixedWidth(80)
+        browse_btn.clicked.connect(self._browse_icon)
+        icon_row.addWidget(self.icon_edit)
+        icon_row.addWidget(browse_btn)
+        layout.addRow("Icon:", icon_row)
+
+        btn_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btn_box.accepted.connect(self._save)
+        btn_box.rejected.connect(self.reject)
+        layout.addRow(btn_box)
+
+    def _browse_icon(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select icon",
+            str(Path.home()),
+            "Images (*.png *.svg *.xpm *.ico *.jpg);;All files (*)",
+        )
+        if path:
+            self.icon_edit.setText(path)
+
+    def _save(self):
+        display = self.name_edit.text().strip()
+        icon = self.icon_edit.text().strip()
+        if not display:
+            QtWidgets.QMessageBox.warning(
+                self, "Error", "Display name cannot be empty."
+            )
+            return
+        existing = self.mapping.mapping.get(self.raw_key, {})
+        # Only write if something actually changed
+        if display == existing.get(
+            "display_name", self._original_display
+        ) and icon == existing.get("icon", ""):
+            self.accept()
+            return
+        entry = {}
+        if display:
+            entry["display_name"] = display
+        if icon:
+            entry["icon"] = icon
+        self.mapping.save_entry(self.raw_key, entry)
+        self.accept()
+
+
+########################################################################
 # Hauptfenster der Anwendung
 ########################################################################
 
@@ -331,6 +408,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setStyleSheet("font-size: 14pt;")
+        self.table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.on_table_context_menu)
         main_layout.addWidget(self.table)
 
         # Settings Button oben rechts hinzufügen:
@@ -618,6 +697,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 item_name = QtWidgets.QTableWidgetItem()
                 self.table.setItem(row, 1, item_name)
             item_name.setText(label)
+            # Store raw key so context menu can look it up
+            item_name.setData(QtCore.Qt.UserRole, raw_for_icon)
 
             item_time = self.table.item(row, 2)
             if item_time is None:
@@ -640,6 +721,33 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_value_before))
 
         self._last_display_usage = new_display_cache
+
+    def on_table_context_menu(self, pos):
+        item = self.table.itemAt(pos)
+        if item is None:
+            return
+        row = item.row()
+        name_item = self.table.item(row, 1)
+        if name_item is None:
+            return
+        raw_key = name_item.data(QtCore.Qt.UserRole) or name_item.text()
+        display_name = name_item.text()
+
+        menu = QtWidgets.QMenu(self)
+        action = menu.addAction("✏  Customize - " + display_name)
+        chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
+        if chosen == action:
+            self.open_customize_dialog(raw_key, display_name)
+
+    def open_customize_dialog(self, raw_key: str, current_display: str):
+        dlg = CustomizeAppDialog(raw_key, current_display, app_mapping, self)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            # Reload mapping and flush icon cache so changes appear immediately
+            app_mapping.load()
+            icon_manager.app_icons.clear() if hasattr(
+                icon_manager, "app_icons"
+            ) else None
+            self.update_table(live_update=False)
 
     def exit_app(self):
         now = datetime.datetime.now()
