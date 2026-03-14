@@ -47,7 +47,6 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 matplotlib.use("Qt5Agg")
 import argparse
-from statistics import StatisticsPage
 
 import map_resolve
 from data_manager import DataManager
@@ -402,8 +401,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stack.addWidget(self.today_page)
 
         main_layout = QtWidgets.QVBoxLayout(self.today_page)
-        self.statistics_page = StatisticsPage(self.stack)
-        self.stack.addWidget(self.statistics_page)
+        # Statistics page is created lazily
+        self._statistics_page = None
 
         self.stack.currentChanged.connect(self.on_stack_changed)
 
@@ -545,13 +544,23 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_stack_changed(self, index: int):
         try:
             widget = self.stack.widget(index)
-            if widget is self.statistics_page:
-                self.statistics_page.reload()
+            if self._statistics_page is not None and widget is self._statistics_page:
+                self._statistics_page.reload()
         except Exception:
             pass
 
+    def _get_statistics_page(self):
+        if self._statistics_page is None:
+            from statistics import StatisticsPage
+
+            self._statistics_page = StatisticsPage(
+                self.stack, icon_manager, app_mapping
+            )
+            self.stack.addWidget(self._statistics_page)
+        return self._statistics_page
+
     def show_statistics(self):
-        self.stack.setCurrentWidget(self.statistics_page)
+        self.stack.setCurrentWidget(self._get_statistics_page())
 
     def load_usage_from_db(self):
         today = datetime.date.today().isoformat()
@@ -596,8 +605,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show()
         self.setWindowState(QtCore.Qt.WindowNoState)
         try:
-            if self.stack.currentWidget() is self.statistics_page:
-                self.statistics_page.reload()
+            if (
+                self._statistics_page is not None
+                and self.stack.currentWidget() is self._statistics_page
+            ):
+                self._statistics_page.reload()
         except Exception:
             pass
 
