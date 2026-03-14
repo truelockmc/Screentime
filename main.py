@@ -231,7 +231,17 @@ def get_active_window_process_name():
 
 
 # Dont count time on Lockscreen
+# Cache the gdbus result for 5 seconds to avoid a subprocess call every tick.
+_lock_cache: dict = {"result": False, "ts": 0.0}
+_LOCK_CACHE_TTL = 5.0
+
+
 def is_screen_locked_linux():
+    import time
+
+    now = time.monotonic()
+    if now - _lock_cache["ts"] < _LOCK_CACHE_TTL:
+        return _lock_cache["result"]
     try:
         out = subprocess.check_output(
             [
@@ -247,9 +257,12 @@ def is_screen_locked_linux():
             ],
             stderr=subprocess.DEVNULL,
         )
-        return "true" in out.decode().lower()
+        result = "true" in out.decode().lower()
     except Exception:
-        return False
+        result = False
+    _lock_cache["result"] = result
+    _lock_cache["ts"] = now
+    return result
 
 
 # Settings
@@ -612,11 +625,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         raw_active_app = get_active_window_process_name()
 
-        active_app, _icon_hint = (
-            app_mapping.resolve(raw_active_app) if raw_active_app else ("", None)
-        )
-
-        if active_app == self.current_process and self.current_process:
+        # Compare raw process keys directly, no need to resolve() here since
+        # update_table resolves every visible row anyway.
+        if raw_active_app == self.current_process and self.current_process:
             self.update_total_usage()
             self.update_table(live_update=True)
         else:

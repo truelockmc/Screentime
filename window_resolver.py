@@ -71,10 +71,6 @@ def get_active_window_id() -> Optional[str]:
     return token if token else None
 
 
-def _xprop_prop(win: str, prop: str) -> str:
-    return _run_cmd(["xprop", "-id", win, prop]).strip()
-
-
 def _parse_xprop_value(s: str) -> str:
     if "=" in s:
         return s.split("=", 1)[1].strip()
@@ -90,23 +86,22 @@ def get_active_window_info() -> Dict[str, Optional[str]]:
     win = get_active_window_id()
     if not win:
         return {"window": None, "wm_class": None, "wm_pid": None, "wm_name": None}
-    wm_class_raw = _xprop_prop(win, "WM_CLASS")
-    wm_pid_raw = _xprop_prop(win, "_NET_WM_PID")
-    wm_name_raw = _xprop_prop(win, "WM_NAME")
 
-    wm_class = (
-        _extract_first_quoted(_parse_xprop_value(wm_class_raw))
-        if wm_class_raw
-        else None
-    )
-    wm_pid = None
-    if wm_pid_raw and "_NET_WM_PID" in wm_pid_raw:
-        pid_val = _parse_xprop_value(wm_pid_raw)
-        if pid_val and pid_val.isdigit():
-            wm_pid = pid_val
-    wm_name = (
-        _extract_first_quoted(_parse_xprop_value(wm_name_raw)) if wm_name_raw else None
-    )
+    # Fetch all three properties in a single xprop call instead of three.
+    raw = _run_cmd(["xprop", "-id", win, "WM_CLASS", "_NET_WM_PID", "WM_NAME"])
+
+    wm_class = wm_pid = wm_name = None
+    for line in raw.splitlines():
+        if line.startswith("WM_CLASS"):
+            val = _parse_xprop_value(line)
+            wm_class = _extract_first_quoted(val)
+        elif line.startswith("_NET_WM_PID"):
+            pid_val = _parse_xprop_value(line).strip()
+            if pid_val.isdigit():
+                wm_pid = pid_val
+        elif line.startswith("WM_NAME"):
+            val = _parse_xprop_value(line)
+            wm_name = _extract_first_quoted(val)
 
     return {"window": win, "wm_class": wm_class, "wm_pid": wm_pid, "wm_name": wm_name}
 
@@ -164,12 +159,15 @@ def parse_desktop_file(path: str) -> Dict[str, str]:
     }
 
 
-def find_desktop_for_wm_class(
-    wm_class: Optional[str], wm_name: Optional[str] = None
-) -> Optional[Tuple[str, str]]:
-    if not wm_class and not wm_name:
-        return None
+# Module-level cache for .desktop file contents so we don't re-parse
+# every file on every call to find_desktop_for_wm_class.
+_desktop_cache: Optional[List[Tuple[str, dict]]] = None
 
+
+def _get_desktop_candidates() -> List[Tuple[str, dict]]:
+    global _desktop_cache
+    if _desktop_cache is not None:
+        return _desktop_cache
     candidates = []
     for d in DESKTOP_DIRS:
         if not os.path.isdir(d):
@@ -184,6 +182,17 @@ def find_desktop_for_wm_class(
                     candidates.append((fn, info))
         except Exception:
             continue
+    _desktop_cache = candidates
+    return _desktop_cache
+
+
+def find_desktop_for_wm_class(
+    wm_class: Optional[str], wm_name: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    if not wm_class and not wm_name:
+        return None
+
+    candidates = _get_desktop_candidates()
 
     # 1) StartupWMClass exact
     if wm_class:

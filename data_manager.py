@@ -26,13 +26,22 @@ logger.info("Starting...")
 
 class DataManager:
     DB_PATH = os.path.join(BASE_DIR, "usageData.db")
+    _conn: sqlite3.Connection = None  # persistent connection for hot-path writes
+
+    @staticmethod
+    def _get_conn() -> sqlite3.Connection:
+        """Return (and lazily create) the persistent write connection."""
+        if DataManager._conn is None:
+            DataManager._conn = sqlite3.connect(
+                DataManager.DB_PATH, check_same_thread=False
+            )
+        return DataManager._conn
 
     @staticmethod
     def initialize_database():
         try:
-            conn = sqlite3.connect(DataManager.DB_PATH)
-            c = conn.cursor()
-            c.execute("""
+            conn = DataManager._get_conn()
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS DailyUsage (
                     date TEXT NOT NULL,
                     app_name TEXT NOT NULL,
@@ -40,21 +49,17 @@ class DataManager:
                     PRIMARY KEY (date, app_name)
                 )
             """)
-
             conn.commit()
-            conn.close()
             logger.info("Datenbank initialisiert: %s", DataManager.DB_PATH)
-        except Exception as e:
+        except Exception:
             logger.exception("Fehler bei der Initialisierung der Datenbank:")
 
     @staticmethod
     def add_daily_usage(app_name, seconds, date=None):
         if not date:
             date = datetime.date.today().isoformat()
-
-        conn = sqlite3.connect(DataManager.DB_PATH)
-        c = conn.cursor()
-        c.execute(
+        conn = DataManager._get_conn()
+        conn.execute(
             """
             INSERT INTO DailyUsage (date, app_name, duration_seconds)
             VALUES (?, ?, ?)
@@ -64,7 +69,6 @@ class DataManager:
             (date, app_name, seconds, seconds),
         )
         conn.commit()
-        conn.close()
 
     @staticmethod
     def get_daily_usage(from_date, to_date):

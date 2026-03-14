@@ -38,14 +38,45 @@ def _parse_desktop_file(path: Path) -> dict:
     return result
 
 
+# Module-level cache: maps app_key -> list of matching .desktop Paths.
+# Also caches the full directory scan so we only glob once per session.
+_desktop_all_entries: Optional[List[tuple]] = None  # list of (Path, dict)
+_desktop_key_cache: dict = {}  # app_key -> List[Path]
+
+
+def _get_all_desktop_entries() -> List[tuple]:
+    """Scan all DESKTOP_DIRS once and cache the results."""
+    global _desktop_all_entries
+    if _desktop_all_entries is not None:
+        return _desktop_all_entries
+    entries = []
+    seen = set()
+    for d in DESKTOP_DIRS:
+        try:
+            if not d.exists():
+                continue
+            for p in d.glob("*.desktop"):
+                if str(p) in seen:
+                    continue
+                seen.add(str(p))
+                info = _parse_desktop_file(p)
+                entries.append((p, info))
+        except Exception:
+            logger.exception("Fehler beim Scannen von %s", d)
+    _desktop_all_entries = entries
+    return entries
+
+
 def _find_desktop_entries_by_key(app_key: str) -> List[Path]:
     if not app_key:
         return []
+    if app_key in _desktop_key_cache:
+        return _desktop_key_cache[app_key]
 
     app_key_lower = app_key.lower()
     candidates: List[Path] = []
 
-    # 1) direct filename match (app_key.desktop)
+    # 1) direct filename match (app_key.desktop), check quickly before full scan
     for d in DESKTOP_DIRS:
         try:
             if not d.exists():
@@ -56,46 +87,30 @@ def _find_desktop_entries_by_key(app_key: str) -> List[Path]:
         except Exception:
             continue
     if candidates:
+        _desktop_key_cache[app_key] = candidates
         return candidates
 
-    # 2) scan directories for other matches (Name, StartupWMClass, Exec, filename contains)
-    scanned: List[Path] = []
-    for d in DESKTOP_DIRS:
-        try:
-            if not d.exists():
-                continue
-            for p in d.glob("*.desktop"):
-                if p in scanned:
-                    continue
-                scanned.append(p)
-                info = _parse_desktop_file(p)
-                name = info.get("Name", "")
-                if name and name.lower() == app_key_lower:
-                    candidates.append(p)
-                    continue
-                swc = info.get("StartupWMClass", "")
-                if swc and swc.lower() == app_key_lower:
-                    candidates.append(p)
-                    continue
-                fname = p.stem.lower()
-                if app_key_lower in fname or fname.startswith(app_key_lower):
-                    candidates.append(p)
-                    continue
-                execv = info.get("Exec", "")
-                if execv and app_key_lower in execv.lower():
-                    candidates.append(p)
-                    continue
-        except Exception:
-            logger.exception("Fehler beim Scannen von %s", d)
+    # 2) search the cached full scan
+    for p, info in _get_all_desktop_entries():
+        name = info.get("Name", "")
+        if name and name.lower() == app_key_lower:
+            candidates.append(p)
+            continue
+        swc = info.get("StartupWMClass", "")
+        if swc and swc.lower() == app_key_lower:
+            candidates.append(p)
+            continue
+        fname = p.stem.lower()
+        if app_key_lower in fname or fname.startswith(app_key_lower):
+            candidates.append(p)
+            continue
+        execv = info.get("Exec", "")
+        if execv and app_key_lower in execv.lower():
+            candidates.append(p)
             continue
 
-    seen = set()
-    out = []
-    for p in candidates:
-        if str(p) not in seen:
-            out.append(p)
-            seen.add(str(p))
-    return out
+    _desktop_key_cache[app_key] = candidates
+    return candidates
 
 
 def _icon_from_desktop_entry(desktop_path: Path) -> Optional[QIcon]:

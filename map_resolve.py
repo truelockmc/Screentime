@@ -28,8 +28,14 @@ _STEAM_ICON_DIRS = [
 ]
 
 
+_steam_library_paths_cache: Optional[list] = None
+
+
 def _steam_library_paths():
     """Return all steamapps directory paths, including extra Steam libraries."""
+    global _steam_library_paths_cache
+    if _steam_library_paths_cache is not None:
+        return _steam_library_paths_cache
     paths = []
     for root in _STEAM_DEFAULT_ROOTS:
         if root.exists() and root not in paths:
@@ -41,13 +47,14 @@ def _steam_library_paths():
         if not vdf.exists():
             continue
         try:
-            content = vdf.read_text(encoding="utf-8", errors="ignore")
-            for m in re.finditer(r'"path"\s+"([^"]+)"', content):
+            text = vdf.read_text(encoding="utf-8", errors="ignore")
+            for m in re.finditer(r'"path"\s+"([^"]+)"', text):
                 extra = Path(m.group(1)) / "steamapps"
                 if extra.exists() and extra not in paths:
                     paths.append(extra)
         except Exception:
             pass
+    _steam_library_paths_cache = paths
     return paths
 
 
