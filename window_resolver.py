@@ -13,6 +13,31 @@ DESKTOP_DIRS = [
     os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
 ]
 
+# Wine/Proton process names that are launchers, not the actual game
+WINE_PROCESSES = frozenset(
+    {
+        "wine64-preloader",
+        "wine-preloader",
+        "wine",
+        "wine64",
+        "wineserver",
+        "wine-loader",
+        "wine64-loader",
+        # Common Wine background/system processes
+        "winedevice.exe",
+        "plugplay.exe",
+        "services.exe",
+        "rpcss.exe",
+        "svchost.exe",
+        "explorer.exe",
+        # Steam/Proton wrappers
+        "reaper",
+        "pressure-vessel-adverb",
+        "pressure-vessel-wrap",
+        "steam-runtime-launcher-service",
+    }
+)
+
 
 def _run_cmd(cmd: List[str]) -> str:
     try:
@@ -71,6 +96,25 @@ def get_active_window_info() -> Dict[str, Optional[str]]:
     )
 
     return {"window": win, "wm_class": wm_class, "wm_pid": wm_pid, "wm_name": wm_name}
+
+
+def _get_steam_app_id_from_environ(pid: str) -> Optional[str]:
+    """Read SteamAppId from /proc/{pid}/environ.
+
+    Steam sets this env-var for every Proton game process, so it is the
+    most reliable way to identify which game is running under Wine.
+    """
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            env = f.read().decode(errors="ignore")
+        for var in env.split("\0"):
+            if var.startswith("SteamAppId="):
+                app_id = var.split("=", 1)[1].strip()
+                if app_id and app_id.isdigit() and app_id != "0":
+                    return app_id
+    except Exception:
+        pass
+    return None
 
 
 def resolve_proc_from_pid(pid: str) -> Optional[Dict[str, str]]:
@@ -189,13 +233,32 @@ def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str
     if pid:
         proc = resolve_proc_from_pid(pid)
         if proc:
-            res["proc_path"] = proc.get("exe")
-            res["app_id"] = (
-                os.path.basename(proc.get("exe")) if proc.get("exe") else None
-            )
-            res["app_name"] = res["app_id"]
-            res["method"] = "pid"
-            return res
+            exe_path = proc.get("exe") or ""
+            basename = os.path.basename(exe_path) if exe_path else ""
+            res["proc_path"] = exe_path
+
+            if basename and basename not in WINE_PROCESSES:
+                # Normal non-Wine process, return immediately as before.
+                res["app_id"] = basename
+                res["app_name"] = basename
+                res["method"] = "pid"
+                return res
+
+            # ----------------------------------------------------------------
+            # Wine / Proton process detected.
+            # Try to identify the actual game via the SteamAppId env-var that
+            # Steam injects into every Proton child process.
+            # ----------------------------------------------------------------
+            steam_app_id = _get_steam_app_id_from_environ(pid)
+            if steam_app_id:
+                key = f"steam_app_{steam_app_id}"
+                res["app_id"] = key
+                res["app_name"] = key
+                res["method"] = "steam_app_id"
+                return res
+
+            # No SteamAppId (non-Steam Wine game), fall through so
+            # WM_CLASS / WM_NAME resolution below can take over.
 
     # 2) Mapping (user)
     wm_class = info.get("wm_class")
@@ -214,10 +277,13 @@ def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str
         res["method"] = "desktop_guess"
         return res
 
-    # 4) Fallback: only report WM_CLASS/WM_NAME
+    # 4) Fallback: WM_CLASS / WM_NAME
     if wm_class:
-        res["app_id"] = wm_class
-        res["app_name"] = wm_class
+        # Wine windows often have WM_CLASS = "GameName.exe", strip the suffix
+        # so the display name looks reasonable.
+        display = wm_class[:-4] if wm_class.lower().endswith(".exe") else wm_class
+        res["app_id"] = display
+        res["app_name"] = display
         res["method"] = "wm_class"
         return res
     if info.get("wm_name"):
