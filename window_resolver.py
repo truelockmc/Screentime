@@ -13,6 +13,19 @@ DESKTOP_DIRS = [
     os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
 ]
 
+# WM_CLASS values that are generic Wine/Proton placeholders.
+# When the active window has one of these, WM_NAME is tried first
+# because it usually contains the real game title (set by the game itself).
+GENERIC_WM_CLASSES = frozenset(
+    {
+        "steam_app_default",
+        "steam_app_0",
+        "wine",
+        "wine64",
+        "explorer.exe",
+    }
+)
+
 # Wine/Proton process names that are launchers, not the actual game
 WINE_PROCESSES = frozenset(
     {
@@ -278,17 +291,28 @@ def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str
         return res
 
     # 4) Fallback: WM_CLASS / WM_NAME
+    wm_name = info.get("wm_name")
     if wm_class:
-        # Wine windows often have WM_CLASS = "GameName.exe", strip the suffix
-        # so the display name looks reasonable.
-        display = wm_class[:-4] if wm_class.lower().endswith(".exe") else wm_class
-        res["app_id"] = display
-        res["app_name"] = display
-        res["method"] = "wm_class"
-        return res
-    if info.get("wm_name"):
-        res["app_id"] = info.get("wm_name")
-        res["app_name"] = info.get("wm_name")
+        # If WM_CLASS is a known generic placeholder (e.g. "Steam_App_Default"
+        # used by Lutris/Wine), prefer WM_NAME which the game usually sets to
+        # its real title.  Only fall back to WM_CLASS when WM_NAME is absent.
+        if wm_class.lower() in GENERIC_WM_CLASSES:
+            if wm_name:
+                res["app_id"] = wm_name
+                res["app_name"] = wm_name
+                res["method"] = "wm_name"
+                return res
+            # WM_NAME also empty, nothing useful, fall through to unknown.
+        else:
+            # Wine windows often have WM_CLASS = "GameName.exe", strip suffix.
+            display = wm_class[:-4] if wm_class.lower().endswith(".exe") else wm_class
+            res["app_id"] = display
+            res["app_name"] = display
+            res["method"] = "wm_class"
+            return res
+    if wm_name:
+        res["app_id"] = wm_name
+        res["app_name"] = wm_name
         res["method"] = "wm_name"
         return res
 
@@ -298,11 +322,24 @@ def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str
 
 if __name__ == "__main__":
     import argparse
+    import pprint
+    import time
 
     parser = argparse.ArgumentParser(description="Active window resolver test")
     parser.add_argument("--mapping", help="Path to json File", default=None)
+    parser.add_argument(
+        "--delay",
+        type=int,
+        default=3,
+        help="Seconds to wait before capturing (default: 3)",
+    )
     args = parser.parse_args()
-    out = get_active_app(args.mapping)
-    import pprint
 
+    print(f"Switching to the target window... capturing in {args.delay}s")
+    for i in range(args.delay, 0, -1):
+        print(f"  {i}...")
+        time.sleep(1)
+    print("Capturing!")
+
+    out = get_active_app(args.mapping)
     pprint.pprint(out)
