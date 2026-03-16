@@ -18,5 +18,9 @@
   "gnome-shell": {
     "display_name": "Shell",
     "icon": "/usr/share/icons/hicolor/symbolic/apps/org.gnome.Terminal.Preferences-symbolic.svg"
+  },
+  "zed-editor": {
+    "display_name": "Zed",
+    "icon": "/var/lib/flatpak/exports/share/icons/hicolor/512x512/apps/dev.zed.Zed.png"
   }
 }
