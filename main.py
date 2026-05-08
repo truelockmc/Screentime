@@ -1,4 +1,4 @@
-#!/home/user/venv/bin/python
+#!/usr/bin/env python3
 import os
 import platform
 import sys
@@ -15,7 +15,6 @@ def is_wayland_session() -> bool:
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
-
 IS_WAYLAND = IS_LINUX and is_wayland_session()
 
 if IS_WINDOWS:
@@ -39,7 +38,6 @@ import logging
 import sqlite3
 from collections import defaultdict
 
-# Matplotlib in PyQt5 einbetten
 import matplotlib
 import psutil
 import qdarkstyle
@@ -50,6 +48,7 @@ import argparse
 
 import map_resolve
 from data_manager import DataManager
+from single_instance import InstanceAlreadyRunningError, SingleInstance, get_data_dir
 
 print(f"XDG_SESSION_TYPE: {os.environ.get('XDG_SESSION_TYPE')}")
 print(f"WAYLAND_DISPLAY: {os.environ.get('WAYLAND_DISPLAY')}")
@@ -67,19 +66,39 @@ if "-h" in sys.argv or "--help" in sys.argv:
     parser.print_help()
     sys.exit(0)
 
+# ── Single-Instance-Guard ──────────────────────────────────────────────────────
+try:
+    _instance_lock = SingleInstance()
+except InstanceAlreadyRunningError:
+    print("Screentime is already running. Exiting this instance...")
+    sys.exit(0)
+# ──────────────────────────────────────────────────────────────────────────────
+
+DATA_DIR = get_data_dir()
+
+# Point to DATA_DIR
 if getattr(sys, "frozen", False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MAPPING_PATH = os.path.join(BASE_DIR, "map.json")
+MAPPING_PATH = os.path.join(DATA_DIR, "map.json")
+
+# copy map.json (for Appimages)
+if not os.path.exists(MAPPING_PATH):
+    src = os.path.join(BASE_DIR, "map.json")
+    if os.path.exists(src):
+        import shutil
+
+        shutil.copy2(src, MAPPING_PATH)
+
 app_mapping = map_resolve.AppMapping(MAPPING_PATH)
 
 ########################################################################
 # Logging-Setup
 ########################################################################
 
-log_file = os.path.join(BASE_DIR, "log.txt")
+log_file = os.path.join(DATA_DIR, "log.txt")
 logging.basicConfig(
     # level=logging.DEBUG,        # enable debug mode
     level=logging.CRITICAL,  # disable debug mode
@@ -87,8 +106,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 logger.info("Starting...")
-
-# Startup Features
 
 
 def get_executable_path():
@@ -107,7 +124,6 @@ def add_to_autostart():
             cmd = f'"{exe_path}"'
             if not start_with_ui:
                 cmd += " --hidden"
-
             key = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
                 r"Software\Microsoft\Windows\CurrentVersion\Run",
@@ -117,16 +133,13 @@ def add_to_autostart():
             winreg.SetValueEx(key, "ScreenTimeApp", 0, winreg.REG_SZ, cmd)
             winreg.CloseKey(key)
             logger.info("Autostart (Windows) hinzugefügt.")
-
         elif IS_LINUX:
             exe_path = get_executable_path()
             start_with_ui = QtCore.QSettings("true_lock", "Screen Time").value(
                 "start_with_ui", True, type=bool
             )
-
             autostart_dir = Path.home() / ".config" / "autostart"
             autostart_dir.mkdir(parents=True, exist_ok=True)
-
             desktop_file = autostart_dir / "screentime.desktop"
             content = f"""[Desktop Entry]
 Type=Application
@@ -136,7 +149,6 @@ X-GNOME-Autostart-enabled=true
 """
             desktop_file.write_text(content, encoding="utf-8")
             logger.info("Autostart (Linux .desktop) added: %s", desktop_file)
-
         else:
             logger.warning("Autostart is not yet supported on this Platform.")
     except Exception:
@@ -264,7 +276,9 @@ def is_screen_locked_linux():
     return result
 
 
+########################################################################
 # Settings
+########################################################################
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -314,12 +328,10 @@ class CustomizeAppDialog(QtWidgets.QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
 
-        # Display name
         self.name_edit = QtWidgets.QLineEdit()
         entry = mapping.mapping.get(raw_key, {})
         self.name_edit.setText(entry.get("display_name", current_display))
         layout.addRow("Display name:", self.name_edit)
-
         # Icon path
         icon_row = QtWidgets.QHBoxLayout()
         self.icon_edit = QtWidgets.QLineEdit()
@@ -374,7 +386,7 @@ class CustomizeAppDialog(QtWidgets.QDialog):
 
 
 ########################################################################
-# Hauptfenster der Anwendung
+# MainWindow
 ########################################################################
 
 
@@ -403,7 +415,6 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout = QtWidgets.QVBoxLayout(self.today_page)
         # Statistics page is created lazily
         self._statistics_page = None
-
         self.stack.currentChanged.connect(self.on_stack_changed)
 
         main_layout.setSpacing(10)
@@ -424,11 +435,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.customContextMenuRequested.connect(self.on_table_context_menu)
         main_layout.addWidget(self.table)
 
-        # Settings Button oben rechts hinzufügen:
         self.settings_button = QtWidgets.QToolButton(self)
-        self.settings_button.setText(
-            "⚙"
-        )  # alternativ: self.settings_button.setIcon(QtGui.QIcon("path/to/settings_icon.png"))
+        self.settings_button.setText("⚙")
         self.settings_button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         self.settings_button.setFixedSize(32, 32)
         self.settings_button.clicked.connect(self.open_settings)
@@ -441,7 +449,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_statistics = QtWidgets.QPushButton("Statistics")
         self.btn_statistics.setFont(QtGui.QFont("Segoe UI", 14))
         self.btn_statistics.clicked.connect(self.show_statistics)
-
         button_layout.addWidget(self.btn_statistics)
         self.btn_exit = QtWidgets.QPushButton("Quit")
         for btn in (self.btn_statistics, self.btn_exit):
@@ -451,7 +458,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.from_date = QtWidgets.QDateEdit(calendarPopup=True)
         self.to_date = QtWidgets.QDateEdit(calendarPopup=True)
-
         self.from_date.setVisible(False)
         self.to_date.setVisible(False)
 
@@ -485,7 +491,6 @@ class MainWindow(QtWidgets.QMainWindow):
         shown = self.qsettings.value("wayland_warning_shown", False, type=bool)
         if shown:
             return
-
         msg = QtWidgets.QMessageBox(self)
         msg.setIcon(QtWidgets.QMessageBox.Warning)
         msg.setWindowTitle("Wayland Limitation")
@@ -498,32 +503,25 @@ class MainWindow(QtWidgets.QMainWindow):
             "See the GitHub issue for details."
         )
         msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
-
         github_button = msg.addButton(
             "View GitHub Issue", QtWidgets.QMessageBox.ActionRole
         )
-
         msg.exec_()
-
         if msg.clickedButton() == github_button:
             QtGui.QDesktopServices.openUrl(
                 QtCore.QUrl("https://github.com/truelockmc/Screentime/issues/7")
             )
-
         self.qsettings.setValue("wayland_warning_shown", True)
 
     def update_wayland_tracking(self):
         now = datetime.datetime.now()
-
         if IS_LINUX and is_screen_locked_linux():
             self.last_switch_time = now
             return
-
         duration = (now - self.last_switch_time).total_seconds()
         if duration > 0:
             self.usage_today["Wayland PC"] += duration
             DataManager.add_daily_usage("Wayland PC", duration)
-
         self.last_switch_time = now
         self.update_total_usage()
         self.update_table(live_update=False)
@@ -564,22 +562,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_usage_from_db(self):
         today = datetime.date.today().isoformat()
-
         conn = sqlite3.connect(DataManager.DB_PATH)
         c = conn.cursor()
-
         c.execute(
-            """
-            SELECT app_name, duration_seconds
-            FROM DailyUsage
-            WHERE date = ?
-        """,
+            "SELECT app_name, duration_seconds FROM DailyUsage WHERE date = ?",
             (today,),
         )
-
         for app, seconds in c.fetchall():
             self.usage_today[app] += seconds
-
         conn.close()
 
     def setup_tray_icon(self):
@@ -619,13 +609,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.header.setText(f"Todays App Usage (Total: {formatted_total})")
 
     def update_tracking(self):
-
         if IS_WAYLAND:
             self.update_wayland_tracking()
             return
 
         now = datetime.datetime.now()
-
         if now.date() != self.last_switch_time.date():
             self.last_switch_time = now
 
@@ -637,21 +625,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         raw_active_app = get_active_window_process_name()
 
-        # Compare raw process keys directly, no need to resolve() here since
-        # update_table resolves every visible row anyway.
         if raw_active_app == self.current_process and self.current_process:
             self.update_total_usage()
             self.update_table(live_update=True)
         else:
             duration = (now - self.last_switch_time).total_seconds()
-
             if self.current_process and duration > 0:
                 self.usage_today[self.current_process] += duration
                 DataManager.add_daily_usage(self.current_process, duration)
-
             self.current_process = raw_active_app
             self.last_switch_time = now
-
             self.update_total_usage()
             self.update_table(live_update=False)
 
@@ -692,9 +675,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sorted_apps = sorted(
             aggregated.items(), key=lambda x: x[1]["seconds"], reverse=True
         )
-
-        needed_rows = len(sorted_apps)
-        self.table.setRowCount(needed_rows)
+        self.table.setRowCount(len(sorted_apps))
 
         new_display_cache = {}
         scroll_bar = self.table.verticalScrollBar()
@@ -742,7 +723,6 @@ class MainWindow(QtWidgets.QMainWindow):
             new_display_cache[label] = seconds
 
         QtCore.QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_value_before))
-
         self._last_display_usage = new_display_cache
 
     def on_table_context_menu(self, pos):
@@ -755,7 +735,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         raw_key = name_item.data(QtCore.Qt.UserRole) or name_item.text()
         display_name = name_item.text()
-
         menu = QtWidgets.QMenu(self)
         action = menu.addAction("✏  Customize - " + display_name)
         chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
@@ -767,19 +746,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             # Reload mapping and flush icon cache so changes appear immediately
             app_mapping.load()
-            icon_manager.app_icons.clear() if hasattr(
-                icon_manager, "app_icons"
-            ) else None
+            if hasattr(icon_manager, "app_icons"):
+                icon_manager.app_icons.clear()
             self.update_table(live_update=False)
 
     def exit_app(self):
         now = datetime.datetime.now()
         duration = (now - self.last_switch_time).total_seconds()
-
         if self.current_process and duration > 0:
             self.usage_today[self.current_process] += duration
             DataManager.add_daily_usage(self.current_process, duration)
-
+        _instance_lock.release()
         logger.info("Quitting...")
         QtWidgets.QApplication.quit()
 
@@ -795,9 +772,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 ########################################################################
-# Main
+# Platform-specific Icon Manager
 ########################################################################
-# platform-specific Icon Manager Initialization
+
 try:
     if IS_WINDOWS:
         try:
@@ -818,6 +795,11 @@ except Exception:
             )
 
     icon_manager = _FallbackIconManager()
+
+
+########################################################################
+# Entry Point
+########################################################################
 
 
 def main():
