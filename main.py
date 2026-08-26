@@ -44,12 +44,11 @@ import logging
 import sqlite3
 from collections import defaultdict
 
-import matplotlib
 import psutil
 import qdarkstyle
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-matplotlib.use("Qt5Agg")
+# matplotlib is not imported on purpose here. It is only needed for the statistics page.
 import argparse
 
 import map_resolve
