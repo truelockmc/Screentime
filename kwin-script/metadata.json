@@ -1,0 +1,15 @@
+{
+    "KPlugin": {
+        "Id": "screentime-kwin",
+        "Name": "Screentime Active Window Reporter",
+        "Description": "Used to report the active window to the Screentime script via D-Bus. This enables per-application time tracking under wayland.",
+        "Version": "1.0",
+        "Authors": [
+            {
+                "Name": "true_lock"
+            }
+        ]
+    },
+    "X-Plasma-API": "javascript",
+    "X-KDE-ServiceTypes": ["KWin/Script"]
+}
