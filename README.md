@@ -55,6 +55,7 @@ For other DE's or without this script installed/active, time on wayland will be 
 
 ### Setup (KDE Plasma only)
 (in the project's root dir)
+
 ```bash
 kpackagetool6 --type=KWin/Script -i kwin-extension/
 ```
