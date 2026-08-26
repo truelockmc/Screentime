@@ -126,7 +126,7 @@ def get_active_app_wayland(
     # more reliable than the own Search using WM_CLASS,
     # also preferred if App/Mapping/Steam did not find anything
     desktop_file = bridge_snapshot.get("desktop_file")
-    if desktop_file and res.get("method") in (None, "wm_class", "wm_name", "unknown"):
+    if desktop_file and res.get("method") not in ("steam_app_id", "mapping"):
         name = desktop_file.rsplit("/", 1)[-1]
         if name.endswith(".desktop"):
             name = name[: -len(".desktop")]

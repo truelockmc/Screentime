@@ -9,7 +9,7 @@
   },
   "steamwebhelper": {
     "display_name": "Steam",
-    "icon": "/home/user/.local/share/icons/hicolor/256x256/apps/steam.png"
+    "icon": "/usr/share/icons/hicolor/256x256/apps/steam.png"
   },
   "gnome-control-center": {
     "display_name": "Gnome Settings",
@@ -19,7 +19,7 @@
     "display_name": "Shell",
     "icon": "/usr/share/icons/hicolor/symbolic/apps/org.gnome.Terminal.Preferences-symbolic.svg"
   },
-  "zed-editor": {
+  "Zed": {
     "display_name": "Zed",
     "icon": "/var/lib/flatpak/exports/share/icons/hicolor/512x512/apps/dev.zed.Zed.png"
   }
