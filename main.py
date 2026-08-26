@@ -250,16 +250,27 @@ def get_active_window_process_name():
 def get_active_window_process_name_wayland():
     # Like get_active_window_process_name(), but sourced from the kwin-script
     # If there is no Data from the script, it falls back to the generic "Wayland PC"
+    """
+    Returned values:
+      - None:  Never received an Event from the script (probably not installed/active) -> fall back to generic "Wayland PC" Entry
+      - "":    Script is active, but explicitly reports NO
+               active Window (e.g. last window closed) ->
+               treat like screen-lock: time continues, but does not get added to any entry.
+      - Name:  Normal, active App.
+    """
+
     if wayland_bridge is None or get_active_app_wayland is None:
         return None
     receiver = wayland_bridge.get_receiver()
     if receiver is None or not receiver.has_data:
         return None
+    if not receiver.has_active_window:
+        return ""
     try:
         info = get_active_app_wayland(MAPPING_PATH, receiver.snapshot())
     except Exception:
         logger.exception("Error in get_active_window_process_name_wayland:")
-        return None
+        return ""
     name = info.get("app_name") or info.get("app_id")
     if name:
         return name
@@ -269,7 +280,7 @@ def get_active_window_process_name_wayland():
             return psutil.Process(int(wm_pid)).name()
         except Exception:
             pass
-    return None
+    return ""
 
 
 # Dont count time on Lockscreen
@@ -284,24 +295,30 @@ def is_screen_locked_linux():
     now = time.monotonic()
     if now - _lock_cache["ts"] < _LOCK_CACHE_TTL:
         return _lock_cache["result"]
-    try:
-        out = subprocess.check_output(
-            [
-                "gdbus",
-                "call",
-                "--session",
-                "--dest",
-                "org.gnome.ScreenSaver",
-                "--object-path",
-                "/org/gnome/ScreenSaver",
-                "--method",
-                "org.gnome.ScreenSaver.GetActive",
-            ],
-            stderr=subprocess.DEVNULL,
-        )
-        result = "true" in out.decode().lower()
-    except Exception:
-        result = False
+
+    # Different DE's implement different ScreenSaver D-Bus-Interface:
+    # ScreenSaver D-Bus-Interfaces:
+    #   - org.freedesktop.ScreenSaver -> KDE (kscreenlocker) + standard
+    #   - org.gnome.ScreenSaver       -> GNOME, XFCE (xfce4-screensaver)
+
+    candidates = [
+        ("org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver.GetActive"),
+        ("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver.GetActive"),
+    ]
+
+    result = False
+    for dest, obj_path, method in candidates:
+        try:
+            out = subprocess.check_output(
+                ["gdbus", "call", "--session", "--dest", dest,
+                 "--object-path", obj_path, "--method", method],
+                stderr=subprocess.DEVNULL,
+            )
+            result = "true" in out.decode().lower()
+            break  # Answer received -> do not continue trying
+        except Exception:
+            continue  # this Interface is not reachable, try next one
+
     _lock_cache["result"] = result
     _lock_cache["ts"] = now
     return result
@@ -578,7 +595,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_table(live_update=False)
             return
 
-        # From here on -> real per-application time tracking just like on x11
+         # From here on -> real per-application time tracking just like on x11.
         if raw_active_app == self.current_process and self.current_process:
             self.update_total_usage()
             self.update_table(live_update=True)
