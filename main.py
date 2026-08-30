@@ -100,13 +100,13 @@ if not os.path.exists(MAPPING_PATH):
 app_mapping = map_resolve.AppMapping(MAPPING_PATH)
 
 ########################################################################
-# Logging-Setup
+# Logging setup
 ########################################################################
 
 log_file = os.path.join(DATA_DIR, "log.txt")
 logging.basicConfig(
-    level=logging.DEBUG,        # enable debug mode
-    # level=logging.ERROR,  # normal mode
+    # level=logging.DEBUG,        # enable debug mode
+    level=logging.ERROR,  # normal mode
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -137,7 +137,7 @@ def add_to_autostart():
             )
             winreg.SetValueEx(key, "ScreenTimeApp", 0, winreg.REG_SZ, cmd)
             winreg.CloseKey(key)
-            logger.info("Autostart (Windows) hinzugefügt.")
+            logger.info("Autostart (Windows) added.")
         elif IS_LINUX:
             exe_path = get_executable_path()
             start_with_ui = QtCore.QSettings("true_lock", "Screen Time").value(
@@ -155,9 +155,9 @@ X-GNOME-Autostart-enabled=true
             desktop_file.write_text(content, encoding="utf-8")
             logger.info("Autostart (Linux .desktop) added: %s", desktop_file)
         else:
-            logger.warning("Autostart is not yet supported on this Platform.")
+            logger.warning("Autostart is not yet supported on this platform.")
     except Exception:
-        logger.exception("Error whilst trying to create an Autostart:")
+        logger.exception("Error while trying to create an autostart entry:")
 
 
 def remove_from_autostart():
@@ -171,20 +171,20 @@ def remove_from_autostart():
             )
             winreg.DeleteValue(key, "ScreenTimeApp")
             winreg.CloseKey(key)
-            logger.info("Autostart (Windows) entfernt.")
+            logger.info("Autostart (Windows) removed.")
         elif IS_LINUX:
             desktop_file = Path.home() / ".config" / "autostart" / "screentime.desktop"
             if desktop_file.exists():
                 desktop_file.unlink()
-                logger.info("Autostart (Linux) entfernt: %s", desktop_file)
+                logger.info("Autostart (Linux) removed: %s", desktop_file)
         else:
-            logger.warning("Autostart wird auf dieser Plattform nicht unterstützt.")
+            logger.warning("Autostart is not supported on this platform.")
     except Exception:
-        logger.exception("Fehler beim Entfernen des Autostarts:")
+        logger.exception("Error while removing the autostart entry:")
 
 
 ########################################################################
-# Ermitteln des aktuell aktiven Prozesses
+# Determine the currently active process
 ########################################################################
 
 
@@ -201,7 +201,7 @@ def get_active_window_process_name():
             process = psutil.Process(pid.value)
             return process.name(), str(pid.value)
         except Exception:
-            logger.exception("Fehler beim Ermitteln des aktiven Fensters (Windows):")
+            logger.exception("Error while determining the active window (Windows):")
             return "", None
     elif IS_LINUX:
         try:
@@ -234,38 +234,30 @@ def get_active_window_process_name():
                 return psutil.Process(pid).name(), str(pid)
             except FileNotFoundError:
                 logger.warning(
-                    "xdotool nicht gefunden; aktives Fenster unter Linux nicht bestimmt."
+                    "xdotool not found; could not determine the active window on Linux."
                 )
                 return "", None
             except Exception:
-                logger.exception("Fehler beim Ermitteln des aktiven Fensters (Linux):")
+                logger.exception("Error while determining the active window (Linux):")
                 return "", None
         except Exception:
-            logger.exception("Fehler in get_active_window_process_name (Linux):")
+            logger.exception("Error in get_active_window_process_name (Linux):")
             return "", None
     else:
         return "", None
 
 
 def get_active_window_process_name_wayland():
-    # Like get_active_window_process_name(), but sourced from the kwin-script
-    # If there is no Data from the script, it falls back to the generic "Wayland PC"
     """
-    Returns a (name, pid) tuple. Values for name:
-      - None:  Never received an Event from the script (probably not installed/active) -> fall back to generic "Wayland PC" Entry
-      - "":    Script is active, but explicitly reports NO
-               active Window (e.g. last window closed) ->
-               treat like screen-lock: time continues, but does not get added to any entry.
-      - Name:  Normal, active App.
-    """
+    Like get_active_window_process_name(), but sourced from the kwin-script.
+    If there is no data from the script, it falls back to the generic "Wayland PC".
 
-    if wayland_bridge is None or get_active_app_wayland is None:
-        return None
-    receiver = wayland_bridge.get_receiver()
-    if receiver is None or not receiver.has_data:
-        return None
-    if not receiver.has_active_window:
-        return ""
+    Returns a (name, pid) tuple. Values for name:
+      - None:  Never received an event from the script (probably not installed/active) -> fall back to generic "Wayland PC" entry
+      - "":    Script is active, but explicitly reports NO
+               active window (e.g. last window closed) ->
+               treat like screen-lock: time continues, but does not get added to any entry.
+      - Name:  Normal, active app.
     pid is a string or None if unknown.
     """
 
@@ -280,19 +272,6 @@ def get_active_window_process_name_wayland():
         info = get_active_app_wayland(MAPPING_PATH, receiver.snapshot())
     except Exception:
         logger.exception("Error in get_active_window_process_name_wayland:")
-        return ""
-    name = info.get("app_name") or info.get("app_id")
-    if name:
-        return name
-    wm_pid = info.get("wm_pid")
-    if wm_pid:
-        try:
-            return psutil.Process(int(wm_pid)).name()
-        except Exception:
-            pass
-    return ""
-
-
         return "", None
     wm_pid = info.get("wm_pid")
     name = info.get("app_name") or info.get("app_id")
@@ -306,7 +285,7 @@ def get_active_window_process_name_wayland():
     return "", None
 
 
-# Dont count time on Lockscreen
+# Don't count time on the lock screen.
 # Cache the gdbus result for 5 seconds to avoid a subprocess call every tick.
 _lock_cache: dict = {"result": False, "ts": 0.0}
 _LOCK_CACHE_TTL = 5.0
@@ -319,8 +298,8 @@ def is_screen_locked_linux():
     if now - _lock_cache["ts"] < _LOCK_CACHE_TTL:
         return _lock_cache["result"]
 
-    # Different DE's implement different ScreenSaver D-Bus-Interface:
-    # ScreenSaver D-Bus-Interfaces:
+    # Different DEs implement different ScreenSaver D-Bus interfaces:
+    # ScreenSaver D-Bus interfaces:
     #   - org.freedesktop.ScreenSaver -> KDE (kscreenlocker) + standard
     #   - org.gnome.ScreenSaver       -> GNOME, XFCE (xfce4-screensaver)
 
@@ -340,7 +319,7 @@ def is_screen_locked_linux():
             result = "true" in out.decode().lower()
             break  # Answer received -> do not continue trying
         except Exception:
-            continue  # this Interface is not reachable, try next one
+            continue  # this interface is not reachable, try the next one
 
     _lock_cache["result"] = result
     _lock_cache["ts"] = now
@@ -609,12 +588,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.last_switch_time = now
             return
 
-        raw_active_app = get_active_window_process_name_wayland()
-
         raw_active_app, active_pid = get_active_window_process_name_wayland()
 
         if raw_active_app is None:
-            # No screemtime kwin script installed (yet)
+            # No screentime kwin script installed (yet)
             duration = (now - self.last_switch_time).total_seconds()
             if duration > 0:
                 self.usage_today["Wayland PC"] += duration
@@ -626,7 +603,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_table(live_update=False)
             return
 
-         # From here on -> real per-application time tracking just like on x11.
+        # From here on -> real per-application time tracking just like on x11.
         if raw_active_app == self.current_process and self.current_process:
             self.update_total_usage()
             self.update_table(live_update=True)
@@ -735,7 +712,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.last_switch_time = now
 
         if IS_LINUX and is_screen_locked_linux():
-            # Dont count time on Lockscreen
+            # Don't count time on the lock screen
             self.current_process = ""
             self.last_switch_time = now
             return
