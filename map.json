@@ -22,5 +22,11 @@
   "zed-editor": {
     "display_name": "Zed",
     "icon": "/var/lib/flatpak/exports/share/icons/hicolor/512x512/apps/dev.zed.Zed.png"
+  },
+  "zen": {
+    "display_name": "Zen Browser"
+  },
+  "Subnautica 2 0.1.2.0-123362": {
+    "display_name": "Subnautica 2"
   }
 }
