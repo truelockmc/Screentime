@@ -50,7 +50,23 @@ This Program has been tested to work best on Linux with GNOME as this is the Sys
 It has also been tested to work on XFCE and Windows, but the App Names are not recognized as good sometimes.
 
 ## Wayland
-This Application does only correctly work with x11 right now, Wayland support is unlikely [more](https://github.com/truelockmc/Screentime/issues/7)
+Full per-application tracking now works under **KDE Plasma / Wayland** via an optional KWin script (`screentime-kwin`, included in this repo under `kwin-extension/`).
+For other DE's or without this script installed/active, time on wayland will be counted as a generic "Wayland PC" entry.
+
+### Setup (KDE Plasma only)
+(in the project's root dir)
+
+```bash
+kpackagetool6 --type=KWin/Script -i kwin-extension/
+```
+Then enable it in **System Settings → Window Management → KWin Scripts**.
+Or with the kwriteconfig6 tool:
+
+```bash
+kwriteconfig6 --file kwinrc --group Plugins --key screentime-kwinEnabled true && qdbus6 org.kde.KWin /KWin reconfigure
+```
+
+**Note:** The package name of qdbus may differ on your system.
 
 ## 📝 License
 

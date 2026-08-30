@@ -1,0 +1,21 @@
+{
+    "KPlugin": {
+        "Name": "Screentime Active Window Reporter",
+        "Description": "Used to report the active window to the Screentime script via D-Bus. This enables per-application time tracking under wayland.",
+        "Icon": "preferences-system-windows",
+
+        "Authors": [
+            {
+                "Email": "anonyson@proton.me",
+                "Name": "true_lock"
+            }
+        ],
+        "Id": "screentime-kwin",
+        "Version": "1.0",
+        "License": "GPLv3",
+        "Website": "https://codeberg.org/truelockmc/Screentime"
+    },
+    "X-Plasma-API": "javascript",
+    "X-Plasma-MainScript": "code/main.js",
+    "KPackageStructure": "KWin/Script"
+}

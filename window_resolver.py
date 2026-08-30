@@ -106,6 +106,45 @@ def get_active_window_info() -> Dict[str, Optional[str]]:
     return {"window": win, "wm_class": wm_class, "wm_pid": wm_pid, "wm_name": wm_name}
 
 
+def get_active_app_wayland(
+    mapping_path: Optional[str], bridge_snapshot: Dict[str, Optional[str]]
+) -> Dict[str, Optional[str]]:
+    """Just like get_active_app(), but sourced from wayland_bridge
+    D-Bus-Receiver, not xprop. bridge_snapshot comes from
+    wayland_bridge._ActiveWindowReceiver.snapshot():
+    {"wm_pid": ..., "wm_class": ..., "wm_name": ..., "desktop_file": ...}
+    """
+    info = {
+        "window": None,
+        "wm_class": bridge_snapshot.get("wm_class"),
+        "wm_pid": bridge_snapshot.get("wm_pid"),
+        "wm_name": bridge_snapshot.get("wm_name"),
+    }
+    res = get_active_app(mapping_path=mapping_path, info=info)
+
+    # KWin (on Wayland) also delivers .desktop filename (using win.desktopFileName),
+    # more reliable than the own Search using WM_CLASS,
+    # also preferred if App/Mapping/Steam did not find anything
+    desktop_file = bridge_snapshot.get("desktop_file")
+    if desktop_file and res.get("method") not in ("steam_app_id", "mapping"):
+        name = desktop_file.rsplit("/", 1)[-1]
+        if name.endswith(".desktop"):
+            name = name[: -len(".desktop")]
+        info_full = parse_desktop_file(
+            desktop_file if desktop_file.endswith(".desktop") else ""
+        )
+        for d in DESKTOP_DIRS:
+            candidate = os.path.join(d, f"{name}.desktop")
+            if os.path.isfile(candidate):
+                info_full = parse_desktop_file(candidate)
+                break
+        res["app_id"] = name
+        res["app_name"] = info_full.get("Name") or name
+        res["method"] = "desktop_file_name"
+
+    return res
+
+
 def _get_steam_app_id_from_environ(pid: str) -> Optional[str]:
     """Read SteamAppId from /proc/{pid}/environ.
 
@@ -237,9 +276,22 @@ def load_mapping(path: Optional[str]) -> Dict[str, str]:
     return {}
 
 
-def get_active_app(mapping_path: Optional[str] = None) -> Dict[str, Optional[str]]:
+def get_active_app(
+    mapping_path: Optional[str] = None,
+    info: Optional[Dict[str, Optional[str]]] = None,
+) -> Dict[str, Optional[str]]:
+    """
+    Resolve the currently active window to an app name/id.
+
+        `info` normally comes from xprop (X11, see get_active_window_info()).
+        Under Wayland it can be injected from the wayland_bridge D-Bus
+        receiver instead.
+        Everything below (Steam app detection, user mapping, .desktop lookup,
+        WM_CLASS/WM_NAME fallback) stays identical for both sources.
+    """
     mapping = load_mapping(mapping_path)
-    info = get_active_window_info()
+    if info is None:
+        info = get_active_window_info()
     res = {
         "app_id": None,
         "app_name": None,

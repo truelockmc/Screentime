@@ -28,22 +28,27 @@ else:
     extraction = None
 
 try:
-    from window_resolver import get_active_app
+    from window_resolver import get_active_app, get_active_app_wayland
 except Exception:
     print("falling back on xdotool")
     get_active_app = None
+    get_active_app_wayland = None
+
+try:
+    import wayland_bridge
+except Exception:
+    wayland_bridge = None
 
 import datetime
 import logging
 import sqlite3
 from collections import defaultdict
 
-import matplotlib
 import psutil
 import qdarkstyle
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-matplotlib.use("Qt5Agg")
+# matplotlib is not imported on purpose here. It is only needed for the statistics page.
 import argparse
 
 import map_resolve
@@ -241,6 +246,42 @@ def get_active_window_process_name():
         return ""
 
 
+def get_active_window_process_name_wayland():
+    # Like get_active_window_process_name(), but sourced from the kwin-script
+    # If there is no Data from the script, it falls back to the generic "Wayland PC"
+    """
+    Returned values:
+      - None:  Never received an Event from the script (probably not installed/active) -> fall back to generic "Wayland PC" Entry
+      - "":    Script is active, but explicitly reports NO
+               active Window (e.g. last window closed) ->
+               treat like screen-lock: time continues, but does not get added to any entry.
+      - Name:  Normal, active App.
+    """
+
+    if wayland_bridge is None or get_active_app_wayland is None:
+        return None
+    receiver = wayland_bridge.get_receiver()
+    if receiver is None or not receiver.has_data:
+        return None
+    if not receiver.has_active_window:
+        return ""
+    try:
+        info = get_active_app_wayland(MAPPING_PATH, receiver.snapshot())
+    except Exception:
+        logger.exception("Error in get_active_window_process_name_wayland:")
+        return ""
+    name = info.get("app_name") or info.get("app_id")
+    if name:
+        return name
+    wm_pid = info.get("wm_pid")
+    if wm_pid:
+        try:
+            return psutil.Process(int(wm_pid)).name()
+        except Exception:
+            pass
+    return ""
+
+
 # Dont count time on Lockscreen
 # Cache the gdbus result for 5 seconds to avoid a subprocess call every tick.
 _lock_cache: dict = {"result": False, "ts": 0.0}
@@ -253,24 +294,30 @@ def is_screen_locked_linux():
     now = time.monotonic()
     if now - _lock_cache["ts"] < _LOCK_CACHE_TTL:
         return _lock_cache["result"]
-    try:
-        out = subprocess.check_output(
-            [
-                "gdbus",
-                "call",
-                "--session",
-                "--dest",
-                "org.gnome.ScreenSaver",
-                "--object-path",
-                "/org/gnome/ScreenSaver",
-                "--method",
-                "org.gnome.ScreenSaver.GetActive",
-            ],
-            stderr=subprocess.DEVNULL,
-        )
-        result = "true" in out.decode().lower()
-    except Exception:
-        result = False
+
+    # Different DE's implement different ScreenSaver D-Bus-Interface:
+    # ScreenSaver D-Bus-Interfaces:
+    #   - org.freedesktop.ScreenSaver -> KDE (kscreenlocker) + standard
+    #   - org.gnome.ScreenSaver       -> GNOME, XFCE (xfce4-screensaver)
+
+    candidates = [
+        ("org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver.GetActive"),
+        ("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver.GetActive"),
+    ]
+
+    result = False
+    for dest, obj_path, method in candidates:
+        try:
+            out = subprocess.check_output(
+                ["gdbus", "call", "--session", "--dest", dest,
+                 "--object-path", obj_path, "--method", method],
+                stderr=subprocess.DEVNULL,
+            )
+            result = "true" in out.decode().lower()
+            break  # Answer received -> do not continue trying
+        except Exception:
+            continue  # this Interface is not reachable, try next one
+
     _lock_cache["result"] = result
     _lock_cache["ts"] = now
     return result
@@ -472,7 +519,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.setup_tray_icon()
 
-        if IS_WAYLAND:
+        if IS_WAYLAND and wayland_bridge is not None:
+            wayland_bridge.start()
+            # small delay and check again
+            QtCore.QTimer.singleShot(3000, self._maybe_show_wayland_warning)
+        elif IS_WAYLAND:
             self.show_wayland_warning_once()
 
         self.timer = QtCore.QTimer()
@@ -487,6 +538,12 @@ class MainWindow(QtWidgets.QMainWindow):
         formatted_total = str(datetime.timedelta(seconds=int(total_seconds)))
         self.header.setText(f"Todays App Usage (Total: {formatted_total})")
 
+    def _maybe_show_wayland_warning(self):
+        receiver = wayland_bridge.get_receiver() if wayland_bridge else None
+        if receiver is not None and receiver.has_data:
+            return  # KWin script seems to work, all good
+        self.show_wayland_warning_once()
+
     def show_wayland_warning_once(self):
         shown = self.qsettings.value("wayland_warning_shown", False, type=bool)
         if shown:
@@ -495,8 +552,11 @@ class MainWindow(QtWidgets.QMainWindow):
         msg.setIcon(QtWidgets.QMessageBox.Warning)
         msg.setWindowTitle("Wayland Limitation")
         msg.setText(
-            "Per-application screen time tracking is not supported on Wayland.\n\n"
-            'Only total PC usage time will be tracked and stored as "Wayland PC".'
+            "Per-application screen time tracking on Wayland requires the "
+            "'screentime-kwin' KWin script (KDE Plasma only). It doesn't seem "
+            "to be installed/active.\n\n"
+            "Only total PC usage time will be tracked and stored as "
+            '"Wayland PC" until it is installed. See README.md for setup.'
         )
         msg.setInformativeText(
             "This is a technical limitation of Wayland.\n\n"
@@ -516,15 +576,37 @@ class MainWindow(QtWidgets.QMainWindow):
     def update_wayland_tracking(self):
         now = datetime.datetime.now()
         if IS_LINUX and is_screen_locked_linux():
+            self.current_process = ""
             self.last_switch_time = now
             return
-        duration = (now - self.last_switch_time).total_seconds()
-        if duration > 0:
-            self.usage_today["Wayland PC"] += duration
-            DataManager.add_daily_usage("Wayland PC", duration)
-        self.last_switch_time = now
-        self.update_total_usage()
-        self.update_table(live_update=False)
+
+        raw_active_app = get_active_window_process_name_wayland()
+
+        if raw_active_app is None:
+            # No screemtime kwin script installed (yet)
+            duration = (now - self.last_switch_time).total_seconds()
+            if duration > 0:
+                self.usage_today["Wayland PC"] += duration
+                DataManager.add_daily_usage("Wayland PC", duration)
+            self.current_process = ""
+            self.last_switch_time = now
+            self.update_total_usage()
+            self.update_table(live_update=False)
+            return
+
+         # From here on -> real per-application time tracking just like on x11.
+        if raw_active_app == self.current_process and self.current_process:
+            self.update_total_usage()
+            self.update_table(live_update=True)
+        else:
+            duration = (now - self.last_switch_time).total_seconds()
+            if self.current_process and duration > 0:
+                self.usage_today[self.current_process] += duration
+                DataManager.add_daily_usage(self.current_process, duration)
+            self.current_process = raw_active_app
+            self.last_switch_time = now
+            self.update_total_usage()
+            self.update_table(live_update=False)
 
     def open_settings(self):
         dlg = SettingsDialog(self)
