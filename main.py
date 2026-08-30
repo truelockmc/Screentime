@@ -105,8 +105,8 @@ app_mapping = map_resolve.AppMapping(MAPPING_PATH)
 
 log_file = os.path.join(DATA_DIR, "log.txt")
 logging.basicConfig(
-    # level=logging.DEBUG,        # enable debug mode
-    level=logging.CRITICAL,  # disable debug mode
+    level=logging.DEBUG,        # enable debug mode
+    # level=logging.ERROR,  # normal mode
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -189,19 +189,20 @@ def remove_from_autostart():
 
 
 def get_active_window_process_name():
+    """Returns a (name, pid) tuple. pid is a string or None if unknown."""
     if IS_WINDOWS:
         try:
             user32 = ctypes.windll.user32
             hwnd = user32.GetForegroundWindow()
             if hwnd == 0:
-                return ""
+                return "", None
             pid = ctypes.c_ulong()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             process = psutil.Process(pid.value)
-            return process.name()
+            return process.name(), str(pid.value)
         except Exception:
             logger.exception("Fehler beim Ermitteln des aktiven Fensters (Windows):")
-            return ""
+            return "", None
     elif IS_LINUX:
         try:
             if get_active_app is not None:
@@ -209,19 +210,19 @@ def get_active_window_process_name():
                     info = get_active_app(mapping_path=MAPPING_PATH)
                 except Exception:
                     info = {}
+                wm_pid = info.get("wm_pid")
                 name = info.get("app_name") or info.get("app_id") or None
                 if name:
-                    return name
+                    return name, wm_pid
                 proc_path = info.get("proc_path")
                 if proc_path:
                     try:
-                        return Path(proc_path).name
+                        return Path(proc_path).name, wm_pid
                     except Exception:
                         pass
-                wm_pid = info.get("wm_pid")
                 if wm_pid:
                     try:
-                        return psutil.Process(int(wm_pid)).name()
+                        return psutil.Process(int(wm_pid)).name(), wm_pid
                     except Exception:
                         pass
             try:
@@ -230,27 +231,27 @@ def get_active_window_process_name():
                     stderr=subprocess.DEVNULL,
                 )
                 pid = int(out.strip())
-                return psutil.Process(pid).name()
+                return psutil.Process(pid).name(), str(pid)
             except FileNotFoundError:
                 logger.warning(
                     "xdotool nicht gefunden; aktives Fenster unter Linux nicht bestimmt."
                 )
-                return ""
+                return "", None
             except Exception:
                 logger.exception("Fehler beim Ermitteln des aktiven Fensters (Linux):")
-                return ""
+                return "", None
         except Exception:
             logger.exception("Fehler in get_active_window_process_name (Linux):")
-            return ""
+            return "", None
     else:
-        return ""
+        return "", None
 
 
 def get_active_window_process_name_wayland():
     # Like get_active_window_process_name(), but sourced from the kwin-script
     # If there is no Data from the script, it falls back to the generic "Wayland PC"
     """
-    Returned values:
+    Returns a (name, pid) tuple. Values for name:
       - None:  Never received an Event from the script (probably not installed/active) -> fall back to generic "Wayland PC" Entry
       - "":    Script is active, but explicitly reports NO
                active Window (e.g. last window closed) ->
@@ -265,6 +266,16 @@ def get_active_window_process_name_wayland():
         return None
     if not receiver.has_active_window:
         return ""
+    pid is a string or None if unknown.
+    """
+
+    if wayland_bridge is None or get_active_app_wayland is None:
+        return None, None
+    receiver = wayland_bridge.get_receiver()
+    if receiver is None or not receiver.has_data:
+        return None, None
+    if not receiver.has_active_window:
+        return "", None
     try:
         info = get_active_app_wayland(MAPPING_PATH, receiver.snapshot())
     except Exception:
@@ -280,6 +291,19 @@ def get_active_window_process_name_wayland():
         except Exception:
             pass
     return ""
+
+
+        return "", None
+    wm_pid = info.get("wm_pid")
+    name = info.get("app_name") or info.get("app_id")
+    if name:
+        return name, wm_pid
+    if wm_pid:
+        try:
+            return psutil.Process(int(wm_pid)).name(), wm_pid
+        except Exception:
+            pass
+    return "", None
 
 
 # Dont count time on Lockscreen
@@ -448,6 +472,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.usage_today = defaultdict(float)
         self.current_process = ""
+        self.current_pid = None
+        # Remembers the last known pid a given app name ran with, so
+        # update_table() can still resolve an icon (e.g. via icoextract)
+        # after the window is no longer the active one.
+        self.last_pid_for_app = {}
         self.last_switch_time = datetime.datetime.now()
 
         central_widget = QtWidgets.QWidget()
@@ -582,6 +611,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         raw_active_app = get_active_window_process_name_wayland()
 
+        raw_active_app, active_pid = get_active_window_process_name_wayland()
+
         if raw_active_app is None:
             # No screemtime kwin script installed (yet)
             duration = (now - self.last_switch_time).total_seconds()
@@ -589,6 +620,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.usage_today["Wayland PC"] += duration
                 DataManager.add_daily_usage("Wayland PC", duration)
             self.current_process = ""
+            self.current_pid = None
             self.last_switch_time = now
             self.update_total_usage()
             self.update_table(live_update=False)
@@ -604,6 +636,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.usage_today[self.current_process] += duration
                 DataManager.add_daily_usage(self.current_process, duration)
             self.current_process = raw_active_app
+            self.current_pid = active_pid
+            if raw_active_app and active_pid:
+                self.last_pid_for_app[raw_active_app] = active_pid
             self.last_switch_time = now
             self.update_total_usage()
             self.update_table(live_update=False)
@@ -705,7 +740,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.last_switch_time = now
             return
 
-        raw_active_app = get_active_window_process_name()
+        raw_active_app, active_pid = get_active_window_process_name()
 
         if raw_active_app == self.current_process and self.current_process:
             self.update_total_usage()
@@ -716,6 +751,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.usage_today[self.current_process] += duration
                 DataManager.add_daily_usage(self.current_process, duration)
             self.current_process = raw_active_app
+            self.current_pid = active_pid
+            if raw_active_app and active_pid:
+                self.last_pid_for_app[raw_active_app] = active_pid
             self.last_switch_time = now
             self.update_total_usage()
             self.update_table(live_update=False)
@@ -770,7 +808,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
             percentage = seconds / total * 100
             formatted_time = str(datetime.timedelta(seconds=int(seconds)))
-            icon = icon_manager.get_icon_for_app(raw_for_icon, icon_hint)
+            icon_pid = self.last_pid_for_app.get(raw_for_icon)
+            icon = icon_manager.get_icon_for_app(raw_for_icon, icon_hint, pid=icon_pid)
 
             item_icon = self.table.item(row, 0)
             if item_icon is None:
@@ -871,7 +910,12 @@ try:
 except Exception:
 
     class _FallbackIconManager:
-        def get_icon_for_app(self, app_name: str, icon_hint: str | None = None):
+        def get_icon_for_app(
+            self,
+            app_name: str,
+            icon_hint: str | None = None,
+            pid: str | None = None,
+        ):
             return QtWidgets.QApplication.style().standardIcon(
                 QtWidgets.QStyle.SP_FileIcon
             )
