@@ -1,0 +1,7 @@
+usageData.db
+*.exe
+log.txt
+installer.nsi
+*.pyc
+*.bak
+*.zip

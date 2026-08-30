@@ -94,7 +94,7 @@ class IconManager:
             except TypeError:
                 raw = extraction.extract_icon(exe_path)
             if not raw:
-                return None.
+                return None
             try:
                 img = Image.frombytes("RGBA", (32, 32), raw, "raw", "BGRA")
                 buffer = BytesIO()

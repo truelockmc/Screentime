@@ -13,7 +13,7 @@ else:
 log_file = os.path.join(BASE_DIR, "log.txt")
 logging.basicConfig(
     # level=logging.DEBUG,        # enable debug mode
-    level=logging.CRITICAL,  # disable debug mode
+    level=logging.ERROR,  # normal mode
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
