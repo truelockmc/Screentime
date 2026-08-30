@@ -28,5 +28,27 @@
   },
   "Subnautica 2 0.1.2.0-123362": {
     "display_name": "Subnautica 2"
+  },
+  "org.bunkus.mkvtoolnix-gui": {
+    "display_name": "MKVToolNix GUI",
+    "icon": "/home/user/.local/share/icons/Slot-Dark-Icons/apps/48/mkv-gui.svg"
+  },
+  "Soundux": {
+    "display_name": "Soundux",
+    "icon": "/home/user/.local/share/icons/Slot-Dark-Icons/apps/48/soundux.svg"
+  },
+  "python3": {
+    "display_name": "Python3",
+    "icon": "/usr/share/icons/breeze/mimetypes/22/text-x-python.svg"
+  },
+  "LM-Studio": {
+    "display_name": "LM Studio"
+  },
+  "org.localsend.localsend_app": {
+    "display_name": "LocalSend",
+    "icon": "/home/user/.local/share/icons/Slot-Dark-Icons/apps/48/localsend.svg"
+  },
+  "LosslessCut": {
+    "display_name": "LosslessCut"
   }
 }
