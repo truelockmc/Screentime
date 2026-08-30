@@ -26,6 +26,9 @@ GENERIC_WM_CLASSES = frozenset(
     }
 )
 
+# Suffixes that are sometimes added to game pid -> they should be removed because it looks better ; )
+_BUILD_SUFFIX_RE = re.compile(r"\.(x86_64|x86|x64|amd64)$", re.IGNORECASE)
+
 # Wine/Proton process names that are launchers, not the actual game
 WINE_PROCESSES = frozenset(
     {
@@ -322,8 +325,9 @@ def get_active_app(
             res["proc_path"] = exe_path
 
             if basename and basename not in WINE_PROCESSES:
-                res["app_id"] = basename
-                res["app_name"] = basename
+                clean = _BUILD_SUFFIX_RE.sub("", basename)
+                res["app_id"] = clean
+                res["app_name"] = clean
                 res["method"] = "pid"
                 return res
 
