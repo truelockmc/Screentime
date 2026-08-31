@@ -50,7 +50,7 @@ class DataManager:
                 )
             """)
             conn.commit()
-            logger.info("Datenbank initialisiert: %s", DataManager.DB_PATH)
+            logger.info("Database initialized: %s", DataManager.DB_PATH)
         except Exception:
             logger.exception("Error during database initialization:")
 
