@@ -3,3 +3,4 @@ Pillow
 PyQt5
 qdarkstyle
 matplotlib
+icoextract

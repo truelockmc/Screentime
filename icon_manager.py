@@ -6,9 +6,16 @@ import re
 from pathlib import Path
 from typing import List, Optional
 
+import icoextract
 import psutil
-from PyQt5 import QtWidgets
+from PyQt5 import QtGui, QtWidgets
 from PyQt5.QtGui import QIcon
+
+try:
+    from icoextract import IconExtractor, IconExtractorError
+except ImportError:
+    IconExtractor = None
+    IconExtractorError = Exception
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +41,7 @@ def _parse_desktop_file(path: Path) -> dict:
                 if k in entry:
                     result[k] = entry[k].strip()
     except Exception:
-        logger.exception("Fehler beim Parsen der .desktop-Datei %s", path)
+        logger.exception("Error parsing .desktop file %s", path)
     return result
 
 
@@ -62,7 +69,7 @@ def _get_all_desktop_entries() -> List[tuple]:
                 info = _parse_desktop_file(p)
                 entries.append((p, info))
         except Exception:
-            logger.exception("Fehler beim Scannen von %s", d)
+            logger.exception("Error scanning %s", d)
     _desktop_all_entries = entries
     return entries
 
@@ -139,7 +146,7 @@ def _icon_from_desktop_entry(desktop_path: Path) -> Optional[QIcon]:
         if not q.isNull():
             return q
     except Exception:
-        logger.exception("Fehler beim Laden von Theme-Icon für %s", icon_val)
+        logger.exception("Error loading theme icon for %s", icon_val)
 
     try:
         base = Path(icon_val).stem
@@ -150,6 +157,125 @@ def _icon_from_desktop_entry(desktop_path: Path) -> Optional[QIcon]:
         pass
 
     return None
+
+
+def _winepath_to_linux(pid: str, win_path: str) -> Optional[str]:
+    """Best-effort conversion of a Windows-style exe path (as seen in a Wine/
+    Proton process's cmdline, e.g. "C:\\Games\\Foo\\foo.exe") to the real
+    Linux path inside that process's Wine prefix."""
+    if win_path.startswith("/") and os.path.exists(win_path):
+        return win_path  # some launchers (Lutris/Proton) already pass a Linux path
+
+    prefix = None
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            env = f.read().decode(errors="ignore")
+        for var in env.split("\0"):
+            if var.startswith("STEAM_COMPAT_DATA_PATH="):
+                prefix = os.path.join(var.split("=", 1)[1], "pfx")
+                break
+            if var.startswith("WINEPREFIX="):
+                prefix = var.split("=", 1)[1]
+                break
+    except Exception as exc:
+        logger.debug(
+            "icoextract: /proc/%s/environ not readable (%s: %s). Yama "
+            "ptrace_scope (see `cat /proc/sys/kernel/yama/ptrace_scope`)",
+            pid, type(exc).__name__, exc,
+        )
+        return None
+    if not prefix:
+        logger.debug(
+            "icoextract: no WINEPREFIX/STEAM_COMPAT_DATA_PATH in environ of pid %s found",
+            pid,
+        )
+        return None
+
+    rel = win_path.split(":", 1)[-1].replace("\\", "/").lstrip("/")
+    drive = win_path[0].lower() if ":" in win_path else "c"
+    candidates = (
+        os.path.join(prefix, "dosdevices", f"{drive}:", rel),
+        os.path.join(prefix, "drive_c", rel),
+    )
+    for candidate in candidates:
+        candidate = os.path.realpath(candidate)
+        if os.path.exists(candidate):
+            return candidate
+    logger.debug(
+        "icoextract: none of these paths exists for win_path=%r prefix=%r: %s",
+        win_path, prefix, candidates,
+    )
+    return None
+
+
+def _find_exe_path_for_pid(pid: str) -> Optional[str]:
+    """Look for a *.exe argument in this process's cmdline (Wine/Proton games)
+    and resolve it to a real path on disk."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            args = [a.decode(errors="ignore") for a in f.read().split(b"\x00")]
+    except Exception as exc:
+        logger.debug("icoextract: /proc/%s/cmdline not readable (%s: %s)", pid, type(exc).__name__, exc)
+        return None
+    exe_args = [a for a in args if a.lower().endswith(".exe")]
+    if not exe_args:
+        logger.debug("icoextract: no *.exe-argument in cmdline of pid %s: %s", pid, args)
+        return None
+    for arg in exe_args:
+        resolved = _winepath_to_linux(pid, arg)
+        if resolved:
+            logger.debug("icoextract: pid %s -> exe path %s", pid, resolved)
+            return resolved
+    logger.debug("icoextract: .exe-arguments found (%s), but none is resolvable to a real path", exe_args)
+    return None
+
+
+def _icon_from_exe(exe_path: str) -> Optional[QIcon]:
+    """Extract the embedded icon resource from a Windows .exe/.dll via icoextract."""
+    if IconExtractor is None:
+        logger.debug("icoextract: package 'icoextract' not installed")
+        return None
+    try:
+        extractor = IconExtractor(exe_path)
+        ico_bytes = extractor.get_icon().getvalue()
+        pixmap = QtGui.QPixmap()
+        if pixmap.loadFromData(ico_bytes, "ICO") and not pixmap.isNull():
+            q = QIcon()
+            q.addPixmap(pixmap)
+            return q
+        logger.debug("icoextract: loadFromData does not deliver a valid pixmap for %s", exe_path)
+    except IconExtractorError as exc:
+        logger.debug("icoextract: no icon resource in %s (%s)", exe_path, exc)
+    except Exception:
+        logger.exception("Error extracting icon from %s", exe_path)
+
+    # Fallback: some Windows builds (e.g. Godot/Unity) don't have a
+    # PE icon resource, but ship an .ico file next to the .exe.
+    try:
+        p = Path(exe_path).parent
+        for ico in p.glob("*.ico"):
+            q = QIcon(str(ico))
+            if not q.isNull():
+                return q
+    except Exception:
+        logger.exception("Error in .ico fallback next to %s", exe_path)
+    return None
+
+
+def _get_exe_icon(app_name: str, pid: Optional[str]) -> Optional[QIcon]:
+    """Icon for an .exe running via Wine/Proton, determined live via icoextract
+    from the pid. Cached purely in-memory (via get_icon_for_app)."""
+    if not pid:
+        logger.debug("icoextract: no pid for '%s', cannot extract anything", app_name)
+        return None
+    exe_path = _find_exe_path_for_pid(pid)
+    if not exe_path:
+        return None
+
+    q = _icon_from_exe(exe_path)
+    if not q or q.isNull():
+        logger.debug("icoextract: could not extract icon from %s", exe_path)
+    return q
 
 
 def _get_icon_for_proc(proc: psutil.Process) -> Optional[QIcon]:
@@ -196,7 +322,7 @@ def _get_icon_for_proc(proc: psutil.Process) -> Optional[QIcon]:
                         return q
     except Exception:
         logger.exception(
-            "Fehler beim Laden des Icons für Prozess %s", getattr(proc, "pid", "n/a")
+            "Error loading icon for process %s", getattr(proc, "pid", "n/a")
         )
     return None
 
@@ -211,15 +337,26 @@ class ImprovedIconManager:
     def _get_cached(self, identifier: str) -> Optional[QIcon]:
         return self.app_icons.get(identifier)
 
-    def get_icon_for_app(self, app_name: str, icon_hint: Optional[str] = None) -> QIcon:
+    def get_icon_for_app(
+        self,
+        app_name: str,
+        icon_hint: Optional[str] = None,
+        pid: Optional[str] = None,
+    ) -> QIcon:
         try:
             if not app_name:
                 return QtWidgets.QApplication.style().standardIcon(
                     QtWidgets.QStyle.SP_FileIcon
                 )
 
-            # 1) cache
-            cache_key = f"{app_name}|{icon_hint or ''}"
+            # 1) cache (deliberately WITHOUT the volatile pid itself in the
+            # key: it changes on every game launch and would otherwise
+            # constantly invalidate the cache. Instead only whether a pid is
+            # present at all ("p"/"") - this way an earlier failure without a
+            # pid (game not running yet) is not permanently locked in: as
+            # soon as the pid becomes known, the key changes and a new
+            # attempt (incl. .exe extraction) is made.
+            cache_key = f"{app_name}|{icon_hint or ''}|{'p' if pid else ''}"
             cached = self._get_cached(cache_key)
             if cached and not cached.isNull():
                 return cached
@@ -249,6 +386,15 @@ class ImprovedIconManager:
                 if q and not q.isNull():
                     self._cache_icon(cache_key, q)
                     return q
+
+            # 2b) Windows games under Wine/Proton: pull the icon live from
+            # the .exe via icoextract (covers Lutris-Proton games without
+            # a .desktop entry, without touching Lutris itself). Only
+            # cached in-memory, i.e. requires a running pid.
+            q = _get_exe_icon(app_name, pid)
+            if q and not q.isNull():
+                self._cache_icon(cache_key, q)
+                return q
 
             # 3) try processes (match name or basename)
             for proc in psutil.process_iter(["name", "exe", "cmdline"]):
@@ -280,7 +426,7 @@ class ImprovedIconManager:
                     self._cache_icon(cache_key, q2)
                     return q2
             except Exception:
-                logger.exception("Fehler beim Laden von Theme-Icon für %s", app_name)
+                logger.exception("Error loading theme icon for %s", app_name)
 
             # 5) final fallback: standard icon
             fallback = QtWidgets.QApplication.style().standardIcon(
@@ -291,7 +437,7 @@ class ImprovedIconManager:
 
         except Exception:
             logger.exception(
-                "Fehler in ImprovedIconManager.get_icon_for_app für %s", app_name
+                "Error in ImprovedIconManager.get_icon_for_app for %s", app_name
             )
             return QtWidgets.QApplication.style().standardIcon(
                 QtWidgets.QStyle.SP_FileIcon

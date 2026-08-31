@@ -52,7 +52,7 @@ class DataManager:
             conn.commit()
             logger.info("Datenbank initialisiert: %s", DataManager.DB_PATH)
         except Exception:
-            logger.exception("Fehler bei der Initialisierung der Datenbank:")
+            logger.exception("Error during database initialization:")
 
     @staticmethod
     def add_daily_usage(app_name, seconds, date=None):

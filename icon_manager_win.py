@@ -3,7 +3,7 @@
 Windows-only IconManager
     from icon_manager_windows import IconManager
     icon_manager = IconManager()
-    icon = icon_manager.get_icon_for_app("notepad.exe" oder "notepad")
+    icon = icon_manager.get_icon_for_app("notepad.exe" or "notepad")
 """
 from typing import Optional, List
 import os
@@ -37,7 +37,7 @@ class AppIcon:
                 else:
                     self.__qicon = None
             except Exception:
-                logger.exception("Fehler beim Erstellen von QIcon aus rohen Bytes für %s", identifier)
+                logger.exception("Error creating QIcon from raw bytes for %s", identifier)
                 self.__qicon = None
 
     def get_bytes(self) -> Optional[bytes]:
@@ -59,7 +59,7 @@ class AppIcon:
                     self.__qicon = q
                     return q
             except Exception:
-                logger.exception("Fehler beim Erzeugen von QIcon aus gecachten Bytes für %s", self.__identifier)
+                logger.exception("Error creating QIcon from cached bytes for %s", self.__identifier)
         return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
 
 
@@ -75,7 +75,7 @@ class IconManager:
         try:
             self.app_icons.append(AppIcon(identifier, raw_bytes=raw_bytes, qicon=qicon))
         except Exception:
-            logger.exception("Fehler beim Cachen des Icons für %s", identifier)
+            logger.exception("Error caching icon for %s", identifier)
 
     def get_icon_from_exe(self, exe_path: str) -> Optional[bytes]:
         if not exe_path:
@@ -109,7 +109,7 @@ class IconManager:
                 except Exception:
                     return raw
         except Exception:
-            logger.exception("Fehler beim Extrahieren des Icons aus %s:", exe_path)
+            logger.exception("Error extracting icon from %s:", exe_path)
             return None
 
     def _qicon_from_bytes_or_theme(self, exe_path_or_name: Optional[str], icon_bytes: Optional[bytes]) -> QIcon:
@@ -121,7 +121,7 @@ class IconManager:
                 if not pixmap.isNull():
                     return QIcon(pixmap)
         except Exception:
-            logger.exception("Fehler beim Erzeugen von QIcon aus Bytes:")
+            logger.exception("Error creating QIcon from bytes:")
 
         try:
             base = os.path.basename(exe_path_or_name) if exe_path_or_name else ""
@@ -131,11 +131,11 @@ class IconManager:
                 if not q.isNull():
                     return q
         except Exception:
-            logger.exception("Fehler beim Laden von Theme-Icon für %s:", exe_path_or_name)
+            logger.exception("Error loading theme icon for %s:", exe_path_or_name)
 
         return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
 
-    def get_icon_for_app(self, app_name: str) -> QIcon:
+    def get_icon_for_app(self, app_name: str, icon_hint: str | None = None, pid: str | None = None) -> QIcon:
         try:
             if not app_name:
                 return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
@@ -173,7 +173,7 @@ class IconManager:
                                     self._cache_icon(app_name, qicon, raw_bytes=icon_bytes)
                                     return qicon
                             except Exception:
-                                logger.exception("Fehler beim Erzeugen von QIcon aus Windows-Bytes für %s", app_name)
+                                logger.exception("Error creating QIcon from Windows bytes for %s", app_name)
                         qicon = self._qicon_from_bytes_or_theme(pexe or pname, None)
                         self._cache_icon(app_name, qicon, raw_bytes=None)
                         return qicon
@@ -187,7 +187,7 @@ class IconManager:
                     self._cache_icon(app_name, q, raw_bytes=None)
                     return q
             except Exception:
-                logger.exception("Fehler beim Laden von Theme-Icon für %s", app_name)
+                logger.exception("Error loading theme icon for %s", app_name)
 
             # 4) final fallback
             fallback = QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
@@ -195,5 +195,5 @@ class IconManager:
             return fallback
 
         except Exception:
-            logger.exception("Fehler beim Abrufen des Icons für %s:", app_name)
+            logger.exception("Error retrieving icon for %s:", app_name)
             return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
