@@ -152,8 +152,14 @@ Name=ScreenTimeApp
 Exec="{exe_path}"{" --hidden" if not start_with_ui else ""}
 X-GNOME-Autostart-enabled=true
 """
-            desktop_file.write_text(content, encoding="utf-8")
-            logger.info("Autostart (Linux .desktop) added: %s", desktop_file)
+            # Only write if the content actually changed
+            try:
+                existing = desktop_file.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                existing = None
+            if existing != content:
+                desktop_file.write_text(content, encoding="utf-8")
+                logger.info("Autostart (Linux .desktop) added: %s", desktop_file)
         else:
             logger.warning("Autostart is not yet supported on this platform.")
     except Exception:
