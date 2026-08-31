@@ -71,7 +71,11 @@ def _compute_statistics(from_date, to_date, aggregation):
             time_series.setdefault(f"{y}-W{w:02d}", 0)
             current += datetime.timedelta(weeks=1)
     else:  # month
-        current = from_date
+        # Pin the day to 1 for the iteration: only the month is relevant here
+        # a day like 31 would make replace(month=...)
+        # fail as soon as the next month has fewer days (e.g. Aug 31 ->
+        # Sep 31 doesn't exist).
+        current = from_date.replace(day=1)
         while current <= to_date:
             time_series.setdefault(current.strftime("%Y-%m"), 0)
             if current.month == 12:
