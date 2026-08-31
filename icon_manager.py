@@ -356,10 +356,23 @@ class ImprovedIconManager:
         return None
 
     def clear_cache(self):
-        """Clear both the in-memory and the on-disk icon cache."""
+        """Clear both the in-memory and the on-disk icon cache for EVERY
+        app. Prefer invalidate_app() when only one app's icon changed."""
         self.app_icons.clear()
         self._failed_attempts.clear()
         icon_disk_cache.clear_all()
+
+    def invalidate_app(self, app_name: str):
+        """Drop cached icons for a single app, e.g. right after the user
+        sets a custom icon for it via the customize dialog."""
+        prefix = f"{app_name}|"
+        stale_keys = [k for k in self.app_icons if k == app_name or k.startswith(prefix)]
+        for k in stale_keys:
+            del self.app_icons[k]
+            icon_disk_cache.invalidate(k)
+        self._failed_attempts = {
+            a for a in self._failed_attempts if not (a == app_name or a.startswith(prefix))
+        }
 
     def get_icon_for_app(
         self,

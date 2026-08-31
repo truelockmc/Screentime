@@ -172,6 +172,21 @@ def save_icon(key: str, qicon: Optional[QIcon], size: int = ICON_CACHE_SIZE) -> 
             pass
 
 
+def invalidate(key: str) -> None:
+    """Drop the on-disk cache entry for a single `key`, e.g. because the
+    user just set a custom icon for that one app.
+
+    Only the pointer file is removed. The underlying content/<hash>.png is
+    left untouched, since it's content-addressed and other keys may still
+    be pointing at the very same image.
+    """
+    ptr_path = _key_path(key)
+    try:
+        ptr_path.unlink(missing_ok=True)
+    except Exception:
+        logger.debug("Could not invalidate icon cache entry for key %r", key, exc_info=True)
+
+
 def clear_all() -> None:
     """Remove every cached icon (pointers and content), e.g. after the user
     picks a custom icon"""

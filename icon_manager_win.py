@@ -91,9 +91,16 @@ class IconManager:
             icon_disk_cache.save_icon(identifier, qicon)
 
     def clear_cache(self):
-        """Clear both the in-memory and the on-disk icon cache."""
+        """Clear both the in-memory and the on-disk icon cache for EVERY
+        app. Prefer invalidate_app() when only one app's icon changed."""
         self.app_icons = []
         icon_disk_cache.clear_all()
+
+    def invalidate_app(self, app_name: str):
+        """Drop the cached icon for a single app (identifier == app_name
+        for this manager)."""
+        self.app_icons = [t for t in self.app_icons if t.get_identifier() != app_name]
+        icon_disk_cache.invalidate(app_name)
 
     def get_icon_from_exe(self, exe_path: str) -> Optional[bytes]:
         if not exe_path:

@@ -851,7 +851,11 @@ class MainWindow(QtWidgets.QMainWindow):
             # Reload mapping and flush icon cache (memory + disk) so changes
             # appear immediately instead of showing a stale cached icon
             app_mapping.load()
-            if hasattr(icon_manager, "clear_cache"):
+            # Only drop the cached icon for THIS app. clear_cache() would
+            # remove every other app's icon too
+            if hasattr(icon_manager, "invalidate_app"):
+                icon_manager.invalidate_app(raw_key)
+            elif hasattr(icon_manager, "clear_cache"):
                 icon_manager.clear_cache()
             elif hasattr(icon_manager, "app_icons"):
                 icon_manager.app_icons.clear()
