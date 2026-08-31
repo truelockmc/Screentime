@@ -11,6 +11,8 @@ import psutil
 from PyQt5 import QtGui, QtWidgets
 from PyQt5.QtGui import QIcon
 
+import icon_disk_cache
+
 try:
     from icoextract import IconExtractor, IconExtractorError
 except ImportError:
@@ -330,12 +332,34 @@ def _get_icon_for_proc(proc: psutil.Process) -> Optional[QIcon]:
 class ImprovedIconManager:
     def __init__(self):
         self.app_icons: dict[str, QIcon] = {}
+        # In-memory-only markers for "already tried and found nothing"
+        self._failed_attempts: set[str] = set()
 
-    def _cache_icon(self, identifier: str, qicon: QIcon):
+    def _cache_icon(self, identifier: str, qicon: QIcon, persist: bool = True):
         self.app_icons[identifier] = qicon
+        if persist:
+            # Second-level on-disk cache so this icon doesn't have to be
+            # re-resolved (desktop scan / icoextract / process iteration)
+            # after the next app restart. No-ops if already cached on disk.
+            icon_disk_cache.save_icon(identifier, qicon)
 
     def _get_cached(self, identifier: str) -> Optional[QIcon]:
-        return self.app_icons.get(identifier)
+        cached = self.app_icons.get(identifier)
+        if cached and not cached.isNull():
+            return cached
+        # Memory miss: fall back to the on-disk cache (cheap read, no writes)
+        # before redoing any of the expensive lookup steps below.
+        disk_icon = icon_disk_cache.load_icon(identifier)
+        if disk_icon and not disk_icon.isNull():
+            self.app_icons[identifier] = disk_icon
+            return disk_icon
+        return None
+
+    def clear_cache(self):
+        """Clear both the in-memory and the on-disk icon cache."""
+        self.app_icons.clear()
+        self._failed_attempts.clear()
+        icon_disk_cache.clear_all()
 
     def get_icon_for_app(
         self,
@@ -349,17 +373,29 @@ class ImprovedIconManager:
                     QtWidgets.QStyle.SP_FileIcon
                 )
 
-            # 1) cache (deliberately WITHOUT the volatile pid itself in the
-            # key: it changes on every game launch and would otherwise
-            # constantly invalidate the cache. Instead only whether a pid is
-            # present at all ("p"/"") - this way an earlier failure without a
-            # pid (game not running yet) is not permanently locked in: as
-            # soon as the pid becomes known, the key changes and a new
-            # attempt (incl. .exe extraction) is made.
-            cache_key = f"{app_name}|{icon_hint or ''}|{'p' if pid else ''}"
-            cached = self._get_cached(cache_key)
+            # Stable key: once an icon has actually been found for this
+            # app/hint, it stays valid forever - regardless of whether the
+            # app happens to have a running pid *right now*. This is what
+            # both the memory and the on-disk cache are keyed on, so e.g. a
+            # game's icon (found via icoextract while it was running) is
+            # still returned correctly later if no pid is there.
+            stable_key = f"{app_name}|{icon_hint or ''}"
+            cached = self._get_cached(stable_key)
             if cached and not cached.isNull():
                 return cached
+
+            # Attempt key: memory-only marker for "already tried and found
+            # nothing, with this pid-availability". Kept separate from the
+            # stable key above and never persisted to disk. This avoids
+            # re-running the full expensive lookup chain on every table
+            # refresh, while a pid becoming newly available (e.g. the game
+            # just launched) still triggers a fresh attempt (incl. icoextract).
+            attempt_key = f"{stable_key}|{'p' if pid else ''}"
+            if attempt_key in self._failed_attempts:
+                return QtWidgets.QApplication.style().standardIcon(
+                    QtWidgets.QStyle.SP_FileIcon
+                )
+
             if icon_hint:
                 try:
                     p = Path(icon_hint)
@@ -368,12 +404,12 @@ class ImprovedIconManager:
                     if p.exists():
                         q = QIcon(str(p))
                         if not q.isNull():
-                            self._cache_icon(cache_key, q)
+                            self._cache_icon(stable_key, q)
                             return q
 
                     q = QIcon.fromTheme(icon_hint)
                     if not q.isNull():
-                        self._cache_icon(cache_key, q)
+                        self._cache_icon(stable_key, q)
                         return q
 
                 except Exception:
@@ -384,16 +420,18 @@ class ImprovedIconManager:
             for d in desktop_entries:
                 q = _icon_from_desktop_entry(d)
                 if q and not q.isNull():
-                    self._cache_icon(cache_key, q)
+                    self._cache_icon(stable_key, q)
                     return q
 
             # 2b) Windows games under Wine/Proton: pull the icon live from
             # the .exe via icoextract (covers Lutris-Proton games without
-            # a .desktop entry, without touching Lutris itself). Only
-            # cached in-memory, i.e. requires a running pid.
+            # a .desktop entry, without touching Lutris itself). Requires a
+            # running pid to locate the .exe, but the result is cached under
+            # the pid-independent stable_key, so it keeps being found later
+            # even when the game isn't running anymore.
             q = _get_exe_icon(app_name, pid)
             if q and not q.isNull():
-                self._cache_icon(cache_key, q)
+                self._cache_icon(stable_key, q)
                 return q
 
             # 3) try processes (match name or basename)
@@ -410,7 +448,7 @@ class ImprovedIconManager:
                     ):
                         q = _get_icon_for_proc(proc)
                         if q and not q.isNull():
-                            self._cache_icon(cache_key, q)
+                            self._cache_icon(stable_key, q)
                             return q
                 except Exception:
                     continue
@@ -419,21 +457,21 @@ class ImprovedIconManager:
             try:
                 q = QIcon.fromTheme(app_name)
                 if q and not q.isNull():
-                    self._cache_icon(cache_key, q)
+                    self._cache_icon(stable_key, q)
                     return q
                 q2 = QIcon.fromTheme(Path(app_name).stem)
                 if q2 and not q2.isNull():
-                    self._cache_icon(cache_key, q2)
+                    self._cache_icon(stable_key, q2)
                     return q2
             except Exception:
                 logger.exception("Error loading theme icon for %s", app_name)
 
-            # 5) final fallback: standard icon
-            fallback = QtWidgets.QApplication.style().standardIcon(
+            # 5) final fallback: standard icon. Not cached as a real icon
+            # at all (see stable_key/attempt_key above)
+            self._failed_attempts.add(attempt_key)
+            return QtWidgets.QApplication.style().standardIcon(
                 QtWidgets.QStyle.SP_FileIcon
             )
-            self._cache_icon(cache_key, fallback)
-            return fallback
 
         except Exception:
             logger.exception(

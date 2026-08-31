@@ -848,9 +848,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def open_customize_dialog(self, raw_key: str, current_display: str):
         dlg = CustomizeAppDialog(raw_key, current_display, app_mapping, self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            # Reload mapping and flush icon cache so changes appear immediately
+            # Reload mapping and flush icon cache (memory + disk) so changes
+            # appear immediately instead of showing a stale cached icon
             app_mapping.load()
-            if hasattr(icon_manager, "app_icons"):
+            if hasattr(icon_manager, "clear_cache"):
+                icon_manager.clear_cache()
+            elif hasattr(icon_manager, "app_icons"):
                 icon_manager.app_icons.clear()
             self.update_table(live_update=False)
 
