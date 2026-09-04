@@ -41,6 +41,7 @@ except Exception:
 
 import datetime
 import logging
+import signal
 from collections import defaultdict
 
 import psutil
@@ -548,7 +549,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Separate, low-frequency timer that flushes buffered usage data to
         # disk.
         self.db_flush_timer = QtCore.QTimer()
-        self.db_flush_timer.setInterval(40_000)  # flush at most once every 40 seconds
+        self.db_flush_timer.setInterval(40_000)  # flush at most once every 40 seconds.
+        self.db_flush_timer.timeout.connect(DataManager.flush)
         self.db_flush_timer.start()
 
         self.load_usage_from_db()
@@ -871,8 +873,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.current_process and duration > 0:
             self.usage_today[self.current_process] += duration
             DataManager.add_daily_usage(self.current_process, duration)
-        # Make sure nothing buffered in memory is lost on exit.
-        DataManager.flush()
+        # Make sure nothing buffered in memory is lost on exit, and clean
+        # up the -wal/-shm files via a checkpoint before shutting down.
+        DataManager.close()
         _instance_lock.release()
         logger.info("Quitting...")
         QtWidgets.QApplication.quit()
@@ -932,6 +935,18 @@ def main():
     app.setQuitOnLastWindowClosed(False)
     app.setFont(QtGui.QFont("Segoe UI", 12))
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+
+    # Safety net for *every* shutdown path (tray "Quit", exit_app(), a
+    # window manager kill, etc.)
+    app.aboutToQuit.connect(DataManager.close)
+
+    def _handle_term_sig(signum, frame):
+        logger.info("Received signal %s, flushing and quitting...", signum)
+        DataManager.close()
+        app.quit()
+
+    signal.signal(signal.SIGINT, _handle_term_sig)
+    signal.signal(signal.SIGTERM, _handle_term_sig)
 
     window = MainWindow()
 

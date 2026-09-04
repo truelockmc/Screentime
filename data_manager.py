@@ -124,6 +124,29 @@ class DataManager:
                     )
 
     @staticmethod
+    def close():
+        """Flush, checkpoint the WAL back into the main file, and close.
+
+        Safe to call multiple times (e.g. once explicitly on quit and again
+        via QApplication.aboutToQuit) and safe to call from a signal handler:
+        it never leaves data behind, and if there's nothing left to do it
+        returns immediately without reopening a connection.
+        """
+        DataManager.flush()
+        if DataManager._conn is None:
+            return
+        try:
+            # TRUNCATE checkpoint merges -wal contents back into the main
+            # DB file and truncates it to 0 bytes, so a clean shutdown
+            # doesn't leave -wal/-shm files behind.
+            DataManager._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            DataManager._conn.close()
+        except Exception:
+            logger.exception("Error closing database connection:")
+        finally:
+            DataManager._conn = None
+
+    @staticmethod
     def get_daily_usage(from_date, to_date):
         # Flush first so a read (e.g. opening the statistics page) always
         # sees the latest data, even though writes are otherwise batched.
