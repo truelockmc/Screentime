@@ -1,3 +1,8 @@
+# This repository has been fully moved to [codeberg](https://codeberg.org/truelockmc/Screentime).
+For further updates, Issues and pull requests please view it there.
+
+------------------------
+
 # 📊 Screentime
 
 A lightweight, user-friendly application to monitor your PC usage on **Linux** and **Windows**. Track your screen time, and go touch Grass.
