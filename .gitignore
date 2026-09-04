@@ -1,4 +1,4 @@
-usageData.db
+*.db*
 *.exe
 log.txt
 installer.nsi
