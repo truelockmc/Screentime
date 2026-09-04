@@ -41,7 +41,6 @@ except Exception:
 
 import datetime
 import logging
-import sqlite3
 from collections import defaultdict
 
 import psutil
@@ -546,6 +545,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.start()
         self._last_display_usage = {}
 
+        # Separate, low-frequency timer that flushes buffered usage data to
+        # disk.
+        self.db_flush_timer = QtCore.QTimer()
+        self.db_flush_timer.setInterval(40_000)  # flush at most once every 40 seconds
+        self.db_flush_timer.start()
+
         self.load_usage_from_db()
 
         total_seconds = sum(self.usage_today.values())
@@ -662,7 +667,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_usage_from_db(self):
         today = datetime.date.today().isoformat()
-        conn = sqlite3.connect(DataManager.DB_PATH)
+        conn = DataManager._get_conn()
         c = conn.cursor()
         c.execute(
             "SELECT app_name, duration_seconds FROM DailyUsage WHERE date = ?",
@@ -670,7 +675,6 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         for app, seconds in c.fetchall():
             self.usage_today[app] += seconds
-        conn.close()
 
     def setup_tray_icon(self):
         self.tray_icon = QtWidgets.QSystemTrayIcon(self)
@@ -867,6 +871,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.current_process and duration > 0:
             self.usage_today[self.current_process] += duration
             DataManager.add_daily_usage(self.current_process, duration)
+        # Make sure nothing buffered in memory is lost on exit.
+        DataManager.flush()
         _instance_lock.release()
         logger.info("Quitting...")
         QtWidgets.QApplication.quit()
@@ -874,6 +880,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         event.ignore()
         self.hide()
+        # Cheap safety checkpoint: persist buffered usage whenever the
+        # window is sent to the tray.
+        DataManager.flush()
         self.tray_icon.showMessage(
             "Screen Time",
             "The App will continue to run in the Background.",
