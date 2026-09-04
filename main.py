@@ -41,7 +41,7 @@ except Exception:
 
 import datetime
 import logging
-import sqlite3
+import signal
 from collections import defaultdict
 
 import psutil
@@ -152,8 +152,14 @@ Name=ScreenTimeApp
 Exec="{exe_path}"{" --hidden" if not start_with_ui else ""}
 X-GNOME-Autostart-enabled=true
 """
-            desktop_file.write_text(content, encoding="utf-8")
-            logger.info("Autostart (Linux .desktop) added: %s", desktop_file)
+            # Only write if the content actually changed
+            try:
+                existing = desktop_file.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                existing = None
+            if existing != content:
+                desktop_file.write_text(content, encoding="utf-8")
+                logger.info("Autostart (Linux .desktop) added: %s", desktop_file)
         else:
             logger.warning("Autostart is not yet supported on this platform.")
     except Exception:
@@ -540,6 +546,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.start()
         self._last_display_usage = {}
 
+        # Separate, low-frequency timer that flushes buffered usage data to
+        # disk.
+        self.db_flush_timer = QtCore.QTimer()
+        self.db_flush_timer.setInterval(40_000)  # flush at most once every 40 seconds.
+        self.db_flush_timer.timeout.connect(DataManager.flush)
+        self.db_flush_timer.start()
+
         self.load_usage_from_db()
 
         total_seconds = sum(self.usage_today.values())
@@ -656,7 +669,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_usage_from_db(self):
         today = datetime.date.today().isoformat()
-        conn = sqlite3.connect(DataManager.DB_PATH)
+        conn = DataManager._get_conn()
         c = conn.cursor()
         c.execute(
             "SELECT app_name, duration_seconds FROM DailyUsage WHERE date = ?",
@@ -664,7 +677,6 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         for app, seconds in c.fetchall():
             self.usage_today[app] += seconds
-        conn.close()
 
     def setup_tray_icon(self):
         self.tray_icon = QtWidgets.QSystemTrayIcon(self)
@@ -842,9 +854,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def open_customize_dialog(self, raw_key: str, current_display: str):
         dlg = CustomizeAppDialog(raw_key, current_display, app_mapping, self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            # Reload mapping and flush icon cache so changes appear immediately
+            # Reload mapping and flush icon cache (memory + disk) so changes
+            # appear immediately instead of showing a stale cached icon
             app_mapping.load()
-            if hasattr(icon_manager, "app_icons"):
+            # Only drop the cached icon for THIS app. clear_cache() would
+            # remove every other app's icon too
+            if hasattr(icon_manager, "invalidate_app"):
+                icon_manager.invalidate_app(raw_key)
+            elif hasattr(icon_manager, "clear_cache"):
+                icon_manager.clear_cache()
+            elif hasattr(icon_manager, "app_icons"):
                 icon_manager.app_icons.clear()
             self.update_table(live_update=False)
 
@@ -854,6 +873,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.current_process and duration > 0:
             self.usage_today[self.current_process] += duration
             DataManager.add_daily_usage(self.current_process, duration)
+        # Make sure nothing buffered in memory is lost on exit, and clean
+        # up the -wal/-shm files via a checkpoint before shutting down.
+        DataManager.close()
         _instance_lock.release()
         logger.info("Quitting...")
         QtWidgets.QApplication.quit()
@@ -861,6 +883,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         event.ignore()
         self.hide()
+        # Cheap safety checkpoint: persist buffered usage whenever the
+        # window is sent to the tray.
+        DataManager.flush()
         self.tray_icon.showMessage(
             "Screen Time",
             "The App will continue to run in the Background.",
@@ -910,6 +935,18 @@ def main():
     app.setQuitOnLastWindowClosed(False)
     app.setFont(QtGui.QFont("Segoe UI", 12))
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+
+    # Safety net for *every* shutdown path (tray "Quit", exit_app(), a
+    # window manager kill, etc.)
+    app.aboutToQuit.connect(DataManager.close)
+
+    def _handle_term_sig(signum, frame):
+        logger.info("Received signal %s, flushing and quitting...", signum)
+        DataManager.close()
+        app.quit()
+
+    signal.signal(signal.SIGINT, _handle_term_sig)
+    signal.signal(signal.SIGTERM, _handle_term_sig)
 
     window = MainWindow()
 

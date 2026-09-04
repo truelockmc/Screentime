@@ -50,5 +50,13 @@
   },
   "LosslessCut": {
     "display_name": "LosslessCut"
+  },
+  "Megabonk": {
+    "display_name": "Megabonk",
+    "icon": "/home/user/.local/share/icons/hicolor/128x128/apps/megabonk.png"
+  },
+  "TPM": {
+    "display_name": "Two Point Museum",
+    "icon": "/home/user/.local/share/icons/hicolor/128x128/apps/tpm.png"
   }
 }

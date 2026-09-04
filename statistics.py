@@ -32,6 +32,7 @@ class StatisticsCache:
 
 def _compute_statistics(from_date, to_date, aggregation):
     """Compute statistics synchronously. Returns (time_series, per_app, total_seconds)."""
+    DataManager.flush()
     cache_key = (
         from_date.isoformat(),
         to_date.isoformat(),
